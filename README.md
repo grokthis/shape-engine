@@ -143,10 +143,10 @@ Same source code. Same result. **30x faster.** The shape engine sees structure t
 | **ARM64 assembly** | **0.9 ns** | 322 ns | **358x** | sub + mul + add |
 | **Go** | **10.7 ns** | 321 ns | **30x** | Static fusion |
 | **JavaScript (V8)** | **16.2 ns** | 365 ns | **22.5x** | Integer type tags, V8 JIT |
-| **Java (HotSpot)** | **1.1 ns** | 319 ns | **290x** | JIT'd formula |
-| **Java (full eval)** | **7.2 ns** | 319 ns | **44x** | Flat int[] AST |
-| **Ruby** | **69 ns** | 22,724 ns | **329x** | Direct formula |
-| **Ruby (full eval)** | **497 ns** | 22,724 ns | **45.7x** | AST pattern match |
+| **Java (HotSpot)** | **1.1 ns** | 315 ns | **286x** | JIT'd formula |
+| **Ruby (CRuby)** | **54 ns** | 22,484 ns | **416x** | Direct formula |
+| **Python (CPython)** | **74 ns** | 19,146 ns | **257x** | Direct formula |
+| **Perl** | **74 ns** | 17,471 ns | **237x** | Direct formula |
 
 All native compilers produce the same thing: a loop that iterates 1000 times at ~322 ns. All shape engines produce the same thing: the Gauss sum formula at O(1). The ARM64 shape engine is the floor: 3 instructions, 0.9 ns. The Go and JS shape engines approach it as interpreter overhead decreases.
 
@@ -228,15 +228,19 @@ The structural shortcut works identically everywhere:
 
 | Substrate | Native loop | Shape engine | Speedup |
 |---|---|---|---|
-| C (-O2) | 322 ns | 0.3 ns | 1073x |
+| C (-O2) | 322 ns | 0.3 ns | 1,073x |
+| JavaScript (V8) | 358 ns | 0.5 ns | 705x |
 | ARM64 assembly | 322 ns | 0.9 ns | 358x |
+| Java (HotSpot) | 315 ns | 1.1 ns | 286x |
+| Ruby (CRuby) | 22,484 ns | 54 ns | 416x |
+| Python (CPython) | 19,146 ns | 74 ns | 257x |
+| Perl | 17,471 ns | 74 ns | 237x |
 | Go | 321 ns | 10.7 ns | 30x |
-| JavaScript (V8) | 365 ns | 16.2 ns | 22.5x |
-| Java (HotSpot) | 319 ns | 1.1 ns | 290x |
-| Ruby (CRuby) | 22,724 ns | 69 ns | 329x |
-| FPGA (est.) | ~1000 ns | ~1 ns | 1000x |
+| FPGA (est.) | ~1,000 ns | ~1 ns | 1,000x |
 
-Same structural optimization on every substrate. The native loop iterates. The shape engine computes the formula. The overhead per substrate is the cost of pattern recognition in that language's runtime: C inlines it (0.3 ns), Go has type switches (10.7 ns), V8 JIT-compiles it (16.2 ns), Ruby interprets it (69 ns). The formula itself is the same 3 arithmetic operations everywhere.
+Nine substrates. Same structural optimization everywhere. The native loop iterates. The shape engine computes the formula. The compiled languages (C, Java, JS, Go) all produce the same ~320 ns native loop. The interpreted languages (Ruby, Python, Perl) are 50-70x slower natively, but the shape formula brings them to within 3x of compiled Go.
+
+**Ruby shape engine (54 ns) is faster than Go native (321 ns).** Python shape engine (74 ns) is faster than Go native. The shape engine erases the language performance hierarchy because the formula is the same 3 arithmetic operations everywhere. The only difference is the cost of pattern recognition in each runtime.
 
 ### Why shapes are faster
 
