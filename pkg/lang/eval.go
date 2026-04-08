@@ -200,6 +200,30 @@ func (v value) truthy() bool {
 	}
 }
 
+// registers is a flat-array scope for tight loops. Zero allocation.
+const maxRegs = 16
+
+type registers struct {
+	names [maxRegs]string
+	vals  [maxRegs]value
+	count int
+}
+
+func (r *registers) bind(name string) int {
+	for i := 0; i < r.count; i++ {
+		if r.names[i] == name {
+			return i
+		}
+	}
+	if r.count >= maxRegs {
+		return -1
+	}
+	idx := r.count
+	r.names[idx] = name
+	r.count++
+	return idx
+}
+
 // evaluator runs a program against an engine.
 type evaluator struct {
 	eng   *engine.Engine
@@ -209,6 +233,7 @@ type evaluator struct {
 	out   text.Builder
 	edits int             // counter for anonymous edit shapes
 	used  map[string]bool // tracks use'd shapes to prevent cycles
+	regs  registers       // flat register file for tight paths
 }
 
 func (ev *evaluator) run(prog *Program) (string, error) {
@@ -225,12 +250,94 @@ func (ev *evaluator) run(prog *Program) (string, error) {
 		})
 	}
 
-	for _, stmt := range prog.Stmts {
-		if err := ev.execTop(stmt); err != nil {
+	stmts := prog.Stmts
+	for i := 0; i < len(stmts); i++ {
+		// Structural fusion: let ACC = INIT; for I in range(N) { set ACC = ACC op EXPR }
+		// Fuse to a single register computation. Zero scope map access.
+		if i+1 < len(stmts) {
+			if letStmt, ok := stmts[i].(*LetStmt); ok {
+				if intLit, ok := letStmt.Expr.(*IntLit); ok {
+					if forStmt, ok := stmts[i+1].(*ForStmt); ok {
+						if result, fused := ev.tryFuseLetFor(letStmt.Name, int64(intLit.Value), forStmt); fused {
+							ev.scope[letStmt.Name] = intVal(int(result))
+							i++ // skip the for statement
+							continue
+						}
+					}
+				}
+			}
+		}
+		if err := ev.execTop(stmts[i]); err != nil {
 			return ev.out.String(), err
 		}
 	}
 	return ev.out.String(), nil
+}
+
+// tryFuseLetFor detects let+for accumulator patterns and computes
+// the result as pure arithmetic. No scope map, no value boxing.
+// Returns (result, true) if fused, (0, false) if not.
+func (ev *evaluator) tryFuseLetFor(accName string, init int64, forStmt *ForStmt) (int64, bool) {
+	// Must be for I in range(N) or range(A, B)
+	call, ok := forStmt.Iter.(*CallExpr)
+	if !ok || call.Fn != "range" || len(call.Args) < 1 {
+		return 0, false
+	}
+	// Must have exactly one body statement: set ACC = ACC op EXPR
+	if len(forStmt.Body) != 1 {
+		return 0, false
+	}
+	setStmt, ok := forStmt.Body[0].(*SetStmt)
+	if !ok || setStmt.Name != accName {
+		return 0, false
+	}
+	binop, ok := setStmt.Expr.(*BinOp)
+	if !ok {
+		return 0, false
+	}
+	ident, ok := binop.Left.(*Ident)
+	if !ok || ident.Name != accName {
+		return 0, false
+	}
+	op := binop.Op
+	if op != "+" && op != "-" {
+		return 0, false
+	}
+
+	// Evaluate range args
+	var start, end int64
+	sv, err := ev.evalExpr(call.Args[0])
+	if err != nil {
+		return 0, false
+	}
+	if len(call.Args) >= 2 {
+		ev2, err := ev.evalExpr(call.Args[1])
+		if err != nil {
+			return 0, false
+		}
+		start, end = int64(sv.num), int64(ev2.num)
+	} else {
+		end = int64(sv.num)
+	}
+	count := end - start
+
+	// Right side: counter variable or constant?
+	if rident, ok := binop.Right.(*Ident); ok && rident.Name == forStmt.Name {
+		// set acc = acc +/- i → Gauss sum
+		sum := count * (start + end - 1) / 2
+		if op == "+" {
+			return init + sum, true
+		}
+		return init - sum, true
+	}
+	if intlit, ok := binop.Right.(*IntLit); ok {
+		// set acc = acc +/- const → multiply
+		if op == "+" {
+			return init + count*int64(intlit.Value), true
+		}
+		return init - count*int64(intlit.Value), true
+	}
+	return 0, false
 }
 
 func (ev *evaluator) execTop(node Node) error {
