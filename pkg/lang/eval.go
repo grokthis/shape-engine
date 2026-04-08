@@ -705,8 +705,20 @@ func (ev *evaluator) evalBinOp(b *BinOp) (value, error) {
 		}
 		return intVal(left.num * right.num), nil
 	case "/":
+		if left.kind == "int" && right.kind == "int" {
+			if right.num == 0 {
+				return intVal(0), nil
+			}
+			return intVal(left.num / right.num), nil
+		}
 		return numVal(left.arithNum().Div(right.arithNum())), nil
 	case "%":
+		if left.kind == "int" && right.kind == "int" {
+			if right.num == 0 {
+				return intVal(0), nil
+			}
+			return intVal(left.num % right.num), nil
+		}
 		return numVal(left.arithNum().Mod(right.arithNum())), nil
 	case "==":
 		if eitherFloat {
@@ -1538,6 +1550,11 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) < 1 {
 			return intVal(0), nil
 		}
+		if args[0].kind == "int" {
+			n := args[0].num
+			if n < 0 { n = -n }
+			return intVal(n), nil
+		}
 		return numVal(args[0].arithNum().Abs()), nil
 
 	case "round":
@@ -1548,23 +1565,47 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) >= 2 {
 			places = args[1].num
 		}
+		// Fast path: int with 0 places is already rounded.
+		if args[0].kind == "int" && places == 0 {
+			return args[0], nil
+		}
+		// Fast path: use float64 math for small values.
+		if args[0].n == nil {
+			f := args[0].asFloat()
+			shift := 1.0
+			for p := 0; p < places; p++ { shift *= 10 }
+			rounded := float64(int(f*shift+0.5)) / shift
+			return floatVal(rounded), nil
+		}
 		return numVal(arith.Round(args[0].arithNum(), places)), nil
 
 	case "floor":
 		if len(args) < 1 {
 			return intVal(0), nil
 		}
+		if args[0].kind == "int" { return args[0], nil }
 		return numVal(arith.Floor(args[0].arithNum())), nil
 
 	case "ceil":
 		if len(args) < 1 {
 			return intVal(0), nil
 		}
+		if args[0].kind == "int" { return args[0], nil }
 		return numVal(arith.Ceil(args[0].arithNum())), nil
 
 	case "pow":
 		if len(args) < 2 {
 			return intVal(0), nil
+		}
+		// Fast path: small int base and exponent.
+		if args[0].kind == "int" && args[1].kind == "int" && args[1].num >= 0 && args[1].num <= 62 {
+			result := 1
+			base := args[0].num
+			exp := args[1].num
+			for e := 0; e < exp; e++ {
+				result *= base
+			}
+			return intVal(result), nil
 		}
 		return numVal(args[0].arithNum().Pow(args[1].arithNum())), nil
 
