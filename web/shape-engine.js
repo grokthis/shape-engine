@@ -676,6 +676,33 @@ function createEvaluator(engine) {
     if (fn === 'moment_tick') { const m = engine.trace[num(args[0])]; return m ? m.tick : 0; }
 
     // Testing
+    // Structural rendering: evaluate a shape's content and return the output.
+    // If content is shape-lang (has statements), evaluate it.
+    // If content is raw (HTML/CSS/JS), return it as-is.
+    if (fn === 'render') {
+      const id = str(args[0]);
+      const s = engine.getShape(id);
+      if (!s || !s.character.content) return '';
+      try {
+        const p = parse(s.character.content);
+        // If parsing produced no statements, it's raw content.
+        if (!p.stmts || p.stmts.length === 0) return s.character.content;
+        // If all statements are shape declarations (no executable code), return raw.
+        const hasExec = p.stmts.some(st => st.type !== 'shape');
+        if (!hasExec) return s.character.content;
+        const childEv = createEvaluator(engine);
+        for (const k in scope) childEv.setScope(k, scope[k]);
+        if (args.length >= 2 && args[1] && typeof args[1] === 'object' && args[1]._map) {
+          for (const k in args[1]) { if (k !== '_map') childEv.setScope(k, args[1][k]); }
+        }
+        childEv.run(p);
+        return childEv.getOutput();
+      } catch(e) {
+        // Parse failed: content is raw (HTML/CSS/JS), return as-is.
+        return s.character.content;
+      }
+    }
+
     if (fn === 'assert_true') { if (!truthy(args[0])) throw new Error('FAIL: ' + str(args[1])); return ''; }
     if (fn === 'assert_eq') { if (str(args[0]) !== str(args[1])) throw new Error('FAIL: ' + str(args[2]) + ' (got ' + str(args[0]) + ', want ' + str(args[1]) + ')'); return ''; }
     if (fn === 'assert_neq') { if (str(args[0]) === str(args[1])) throw new Error('FAIL: ' + str(args[2])); return ''; }

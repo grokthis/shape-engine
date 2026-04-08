@@ -16,9 +16,9 @@ let theme_css = ""
 if theme_ref != "" {
   set theme_css = content(theme_ref)
 }
-let page_css = content("os.render." + app + ".style")
-let page_body = content("os.render." + app + ".body")
-let page_js = content("os.render." + app + ".script")
+let page_css = render("os.render." + app + ".style")
+let page_body = render("os.render." + app + ".body")
+let page_js = render("os.render." + app + ".script")
 
 print("<!DOCTYPE html>")
 print("<html lang=\"en\">")

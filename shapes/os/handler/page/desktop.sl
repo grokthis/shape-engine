@@ -13,15 +13,15 @@ if exists("os.config.window.title") {
 let theme_ref = content("os.config.desktop.theme")
 let theme_css = ""
 if theme_ref != "" {
-  set theme_css = content(theme_ref)
+  set theme_css = render(theme_ref)
 }
 
 let wm_ref = content("os.config.desktop.wm")
 if wm_ref == "" {
   set wm_ref = "os.wm.tiling"
 }
-let wm_css = content(wm_ref + ".style")
-let wm_js = content(wm_ref + ".script")
+let wm_css = render(wm_ref + ".style")
+let wm_js = render(wm_ref + ".script")
 
 let active_ws = "1"
 if exists("os.session.desktop.workspace") {
@@ -54,7 +54,6 @@ let tk = global_tick()
 print("<div id=\"statusbar\">")
 print("<div id=\"statusbar-left\">")
 
-// Workspace indicators
 for ws_name in ["1", "2", "3"] {
   let ws_id = "os.desktop.workspace." + ws_name
   if exists(ws_id) {
@@ -89,7 +88,6 @@ for ws_name in ["1", "2", "3"] {
     }
     print("<div class=\"" + ws_cls + "\" data-ws=\"" + ws_name + "\">")
 
-    // Get windows from workspace deps
     let ws_deps = deps(ws_id)
     let has_windows = 0
     let first_window = 1
@@ -118,11 +116,16 @@ for ws_name in ["1", "2", "3"] {
         print("<div class=\"" + win_cls + "\" data-app=\"" + app_name + "\" data-id=\"" + dep_id + "\" style=\"" + win_style + "\">")
         print("<div class=\"window-titlebar\"><span class=\"window-title\">" + app_name + "</span>")
         print("<span class=\"window-controls\"><button class=\"win-btn close\" title=\"close\">&times;</button></span></div>")
-        // Render app content inline from its render shapes.
-        // No iframe. The app's body, style, and script are shapes.
-        let app_style = content("os.render." + app_name + ".style")
-        let app_body = content("os.render." + app_name + ".body")
-        let app_script = content("os.render." + app_name + ".script")
+
+        // Resolve render prefix: app may specify a different render name.
+        let render_name = dim("os.app." + app_name, "render")
+        if render_name == "" {
+          set render_name = app_name
+        }
+        // Render app content structurally from its render shapes.
+        let app_style = render("os.render." + render_name + ".style")
+        let app_body = render("os.render." + render_name + ".body")
+        let app_script = render("os.render." + render_name + ".script")
         print("<div class=\"window-content\">")
         if app_style != "" {
           print("<style>" + app_style + "</style>")
@@ -134,6 +137,7 @@ for ws_name in ["1", "2", "3"] {
           print("<script>" + app_script + "</script>")
         }
         print("</div>")
+
         print("</div>")
       }
     }
@@ -152,7 +156,6 @@ print("<div id=\"launcher\" style=\"display:none\"><div class=\"launcher-backdro
 print("<input type=\"text\" id=\"launcher-input\" placeholder=\"Search apps...\" autofocus>")
 print("<div class=\"launcher-results\">")
 
-// List all apps
 let all_shapes = shapes_under("os.app.")
 for app_sh in all_shapes {
   let app_type = dim(app_sh, "type")

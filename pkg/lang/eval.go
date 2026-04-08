@@ -1621,6 +1621,61 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		}
 		return strVal("PASS"), nil
 
+	case "render":
+		// render(id) or render(id, scope_map) — evaluate a shape's content
+		// in a sandboxed evaluator and return the output.
+		// This is how shapes compose: a parent shape renders its children
+		// by calling render() on each child and composing the results.
+		if len(args) < 1 {
+			return nilVal(), fmt.Errorf("render: need shape ID")
+		}
+		id := args[0].String()
+		sh, ok := ev.eng.GetShape(shape.ID(id))
+		if !ok {
+			return strVal(""), nil
+		}
+		if sh.Character.Content == "" {
+			return strVal(""), nil
+		}
+		renderProg, renderErr := Parse(sh.Character.Content)
+		if renderErr != nil {
+			// Parse failed: content is raw (HTML/CSS/JS), return as-is.
+			return strVal(sh.Character.Content), nil
+		}
+		// If no executable statements, return raw content.
+		hasExec := false
+		for _, stmt := range renderProg.Stmts {
+			if stmt.nodeType() != "shape" {
+				hasExec = true
+				break
+			}
+		}
+		if !hasExec {
+			return strVal(sh.Character.Content), nil
+		}
+		renderEv := &evaluator{
+			eng:   ev.eng,
+			scope: make(map[string]value),
+			fns:   make(map[string]*FnDecl),
+		}
+		// Copy parent scope.
+		for k, v := range ev.scope {
+			renderEv.scope[k] = v
+		}
+		// Apply scope map if provided.
+		if len(args) >= 2 && args[1].kind == "map" {
+			for k, v := range args[1].mp {
+				if k != "_map" {
+					renderEv.scope[k] = v
+				}
+			}
+		}
+		_, renderErr = renderEv.run(renderProg)
+		if renderErr != nil {
+			return strVal(""), nil
+		}
+		return strVal(renderEv.out.String()), nil
+
 	case "test_shape":
 		// test_shape(id) — run a test shape in a sandboxed evaluator.
 		// Returns "PASS" or "FAIL: error message".
