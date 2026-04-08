@@ -842,9 +842,49 @@ async function bootShapeOS() {
   return engine;
 }
 
+// evalFast: skip evaluator creation for pure let+for/accumulator programs.
+// Same static fusion as Go's tryFuseStatic. O(1), zero allocation.
+function evalFast(prog, engine) {
+  const stmts = prog.stmts;
+  if (stmts.length === 2 && stmts[0].type === 'let' && stmts[1].type === 'for') {
+    const letS = stmts[0], forS = stmts[1];
+    if (letS.expr && letS.expr.type === 'int'
+        && forS.iter && forS.iter.type === 'call' && forS.iter.fn === 'range'
+        && forS.body && forS.body.length === 1 && forS.body[0].type === 'set'
+        && forS.body[0].name === letS.name
+        && forS.body[0].expr && forS.body[0].expr.type === 'binop'
+        && forS.body[0].expr.left && forS.body[0].expr.left.type === 'ident'
+        && forS.body[0].expr.left.name === letS.name) {
+      const op = forS.body[0].expr.op;
+      let start = 0, end = 0;
+      if (forS.iter.args.length === 1 && forS.iter.args[0].type === 'int') {
+        end = forS.iter.args[0].value;
+      } else if (forS.iter.args.length >= 2 && forS.iter.args[0].type === 'int' && forS.iter.args[1].type === 'int') {
+        start = forS.iter.args[0].value; end = forS.iter.args[1].value;
+      } else return null;
+      const count = end - start;
+      const init = letS.expr.value;
+      const rhs = forS.body[0].expr.right;
+      // Counter accumulator.
+      if (rhs && rhs.type === 'ident' && rhs.name === forS.name) {
+        const sum = count * (start + end - 1) / 2;
+        if (op === '+') return init + sum;
+        if (op === '-') return init - sum;
+      }
+      // Constant accumulator.
+      if (rhs && rhs.type === 'int') {
+        if (op === '+') return init + count * rhs.value;
+        if (op === '-') return init - count * rhs.value;
+      }
+    }
+  }
+  return null;
+}
+
 // Export for use by index.html
 window.Shape = Shape;
 window.Engine = Engine;
 window.parse = parse;
 window.createEvaluator = createEvaluator;
+window.evalFast = evalFast;
 window.bootShapeOS = bootShapeOS;
