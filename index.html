@@ -8,25 +8,19 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
 
-/* Loading screen */
 #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
 #loading h1 { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
 #loading .status { font-size: 14px; color: #888; }
 #loading .bar { width: 200px; height: 2px; background: #222; border-radius: 1px; overflow: hidden; }
 #loading .bar-fill { height: 100%; background: #4af; width: 0%; transition: width 0.3s; }
 
-/* Username prompt */
-#prompt { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
-#prompt h2 { font-size: 20px; font-weight: 300; }
-#prompt input { background: #111; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; font-size: 16px; border-radius: 4px; outline: none; width: 280px; text-align: center; }
-#prompt input:focus { border-color: #4af; }
-#prompt .hint { font-size: 12px; color: #666; }
+#prompt-screen { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
+#prompt-screen h2 { font-size: 20px; font-weight: 300; }
+#prompt-screen input { background: #111; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; font-size: 16px; border-radius: 4px; outline: none; width: 280px; text-align: center; }
+#prompt-screen input:focus { border-color: #4af; }
+#prompt-screen .hint { font-size: 12px; color: #666; }
 
-/* OS frame */
-#os-frame { display: none; width: 100%; height: 100vh; border: none; }
-
-/* Idle warning */
-#idle-bar { display: none; position: fixed; top: 0; left: 0; right: 0; background: #1a1a2e; color: #888; font-size: 12px; padding: 4px 12px; text-align: center; z-index: 9999; }
+#desktop { display: none; width: 100%; height: 100vh; overflow: hidden; }
 </style>
 </head>
 <body>
@@ -37,14 +31,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div class="status" id="load-status">loading engine...</div>
 </div>
 
-<div id="prompt">
+<div id="prompt-screen">
   <h2>enter a username</h2>
   <input id="username" type="text" placeholder="guest" autocomplete="off" autofocus>
   <div class="hint">sandbox resets after 30 minutes of idle</div>
 </div>
 
-<iframe id="os-frame"></iframe>
-<div id="idle-bar"></div>
+<div id="desktop"></div>
 
 <script src="shape-engine.js"></script>
 <script>
@@ -52,14 +45,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   const barFill = document.getElementById('bar-fill');
   const loadStatus = document.getElementById('load-status');
   const loading = document.getElementById('loading');
-  const prompt = document.getElementById('prompt');
+  const promptScreen = document.getElementById('prompt-screen');
   const usernameInput = document.getElementById('username');
-  const osFrame = document.getElementById('os-frame');
-  const idleBar = document.getElementById('idle-bar');
+  const desktop = document.getElementById('desktop');
 
   let engine;
 
-  // Boot
   barFill.style.width = '30%';
   loadStatus.textContent = 'loading shapes...';
 
@@ -72,86 +63,38 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   }
 
   barFill.style.width = '100%';
-  const sc = engine.shapeCount();
-  loadStatus.textContent = sc + ' shapes loaded';
-  console.log('Shape OS: ' + sc + ' shapes');
-  for (const id of ['os.route.page.desktop', 'os.handler.page.desktop']) {
-    const s = engine.getShape(id);
-    console.log(id + ': ' + (s ? 'OK (' + s.character.content.length + ' chars)' : 'MISSING'));
-  }
-  let rc = 0;
-  for (const s of engine.allShapes()) { if (s.character.dimensions.type === 'route') { console.log('route: ' + s.id + ' path=' + s.character.dimensions.path); rc++; } }
-  console.log(rc + ' routes');
+  loadStatus.textContent = engine.shapeCount() + ' shapes loaded';
 
-  // Show username prompt
   setTimeout(() => {
     loading.style.display = 'none';
-    prompt.style.display = 'flex';
+    promptScreen.style.display = 'flex';
     usernameInput.focus();
   }, 400);
 
-  // Enter to start
   usernameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const username = usernameInput.value.trim() || 'guest';
-      startOS(username);
-    }
+    if (e.key === 'Enter') startOS(usernameInput.value.trim() || 'guest');
   });
 
-  function handleRequest(method, path, body) {
-    // Parse query string from path
-    let queryStr = '';
-    const qi = path.indexOf('?');
-    if (qi >= 0) { queryStr = path.slice(qi + 1); path = path.slice(0, qi); }
-
-    // Find matching route shape
-    let bestRoute = null, bestLen = 0;
-    for (const s of engine.allShapes()) {
-      if (s.character.dimensions.type !== 'route') continue;
-      const rm = s.character.dimensions.method;
-      if (rm && rm.toUpperCase() !== method.toUpperCase()) continue;
-      const rp = s.character.dimensions.path;
-      if (rp === path) { bestRoute = s; break; }
-      if (matchPattern(rp, path)) {
-        const pl = rp.split('/').length;
-        if (pl > bestLen) { bestRoute = s; bestLen = pl; }
-      }
-    }
-
-    if (!bestRoute) return { status: 404, contentType: 'text/plain', body: 'not found' };
-
-    const handlerId = bestRoute.character.dimensions.handler;
-    if (!handlerId) return { status: 500, contentType: 'text/plain', body: 'route has no handler' };
-
-    const handler = engine.getShape(handlerId);
-    if (!handler) return { status: 500, contentType: 'text/plain', body: 'handler not found: ' + handlerId };
-
-    // Build scope
-    const scope = { ...bestRoute.character.dimensions, method, path, query: queryStr, body };
-    for (const param of queryStr.split('&')) {
-      if (!param) continue;
-      const [k, v] = param.split('=');
-      scope['q_' + k] = v || '';
-    }
-    extractPathParams(bestRoute.character.dimensions.path, path, scope);
-
+  // --- Render a shape's content as HTML ---
+  function renderShape(shapeId, scope) {
+    const s = engine.getShape(shapeId);
+    if (!s || !s.character.content) return '';
     try {
-      const prog = parse(handler.character.content);
+      const prog = parse(s.character.content);
       const ev = createEvaluator(engine);
-      for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
+      if (scope) { for (const [k, v] of Object.entries(scope)) ev.setScope(k, v); }
       ev.run(prog);
-      const ct = bestRoute.character.dimensions.content_type || 'text/html; charset=utf-8';
-      return { status: 200, contentType: ct, body: ev.getOutput() };
+      return ev.getOutput();
     } catch(e) {
-      return { status: 500, contentType: 'text/plain', body: 'eval error: ' + e.message };
+      return '<pre style="color:#f77">Error in ' + shapeId + ': ' + e.message + '</pre>';
     }
   }
 
+  // --- Execute a shell command ---
   function execShell(line) {
     line = line.trim();
     if (!line) return '';
 
-    // Pipe support
     if (line.includes(' | ')) {
       const segments = line.split(' | ');
       let output = '';
@@ -167,24 +110,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     const cmd = parts[0];
     const argList = parts.slice(1);
 
-    const prefixShape = engine.getShape('os.session.shell.prefix');
-    const prefix = prefixShape ? prefixShape.character.content : '';
-    const homeShape = engine.getShape('os.config.shell.home');
-    const home = homeShape ? homeShape.character.content : '';
+    const prefix = engine.getShape('os.session.shell.prefix')?.character.content || '';
+    const home = engine.getShape('os.config.shell.home')?.character.content || '';
 
     const cmdShape = engine.getShape('os.shell.cmd.' + cmd);
     if (cmdShape && cmdShape.character.dimensions.type === 'exec') {
       const scope = { args: argList.join(' '), line, cmd, prefix, home };
       argList.forEach((a, i) => scope['arg' + i] = a);
-      try {
-        const prog = parse(cmdShape.character.content);
-        const ev = createEvaluator(engine);
-        for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
-        ev.run(prog);
-        return ev.getOutput();
-      } catch(e) {
-        return 'error: ' + e.message + '\n';
-      }
+      return renderShape('os.shell.cmd.' + cmd, scope);
     }
 
     // Try as raw shape-lang
@@ -198,124 +131,175 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     }
   }
 
-  function matchPattern(pattern, path) {
-    if (!pattern) return false;
-    const pp = pattern.split('/'), tp = path.split('/');
-    for (let i = 0; i < pp.length; i++) {
-      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) return i < tp.length;
-      if (i >= tp.length) return false;
-      if (!pp[i].startsWith('{') && pp[i] !== tp[i]) return false;
-    }
-    return pp.length === tp.length;
-  }
-
-  function extractPathParams(pattern, path, scope) {
-    if (!pattern) return;
-    const pp = pattern.split('/'), tp = path.split('/');
-    for (let i = 0; i < pp.length && i < tp.length; i++) {
-      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) {
-        scope['path_' + pp[i].slice(1, -4)] = tp.slice(i).join('/');
-        return;
-      }
-      if (pp[i].startsWith('{') && pp[i].endsWith('}')) {
-        scope['path_' + pp[i].slice(1, -1)] = tp[i];
-      }
-    }
-  }
-
+  // --- Build the desktop ---
   function startOS(username) {
-    prompt.style.display = 'none';
-    osFrame.style.display = 'block';
+    promptScreen.style.display = 'none';
+    desktop.style.display = 'block';
 
-    // Set username
-    const sessionShape = engine.getShape('os.session');
-    if (sessionShape) sessionShape.character.dimensions.user = username;
+    // Expose for console debugging
+    window.shapeEngine = { engine, execShell, renderShape };
 
-    // Expose to window for debugging
-    window.shapeEngine = { engine, handleRequest, execShell, shapeCount: () => engine.shapeCount() };
+    // Get theme CSS
+    const themeRef = engine.getShape('os.config.desktop.theme')?.character.content || '';
+    const themeCSS = themeRef ? (engine.getShape(themeRef)?.character.content || '') : '';
 
-    // Load desktop
-    loadPage('/desktop');
+    // Get WM CSS
+    const wmRef = engine.getShape('os.config.desktop.wm')?.character.content || 'os.wm.tiling';
+    const wmCSS = engine.getShape(wmRef + '.style')?.character.content || '';
+    const wmJS = engine.getShape(wmRef + '.script')?.character.content || '';
 
-    // Idle timeout: 30 minutes
-    let idleTimer, idleWarningTimer;
-    const IDLE_TIMEOUT = 30 * 60 * 1000;
-    const IDLE_WARNING = 25 * 60 * 1000;
+    // Get terminal render pieces
+    const termCSS = engine.getShape('os.render.terminal.style')?.character.content || '';
+    const termBody = engine.getShape('os.render.terminal.body')?.character.content || '';
+    const termJS = engine.getShape('os.render.terminal.script')?.character.content || '';
 
-    function resetIdle() {
-      clearTimeout(idleTimer);
-      clearTimeout(idleWarningTimer);
-      idleBar.style.display = 'none';
-      idleWarningTimer = setTimeout(() => {
-        idleBar.style.display = 'block';
-        idleBar.textContent = 'Session expires in 5 minutes. Move your mouse or type to stay.';
-      }, IDLE_WARNING);
-      idleTimer = setTimeout(() => location.reload(), IDLE_TIMEOUT);
+    // Default apps
+    const defaultApps = (engine.getShape('os.config.desktop.default.apps')?.character.content || 'shell').split(',').map(s => s.trim());
+
+    // Build desktop HTML directly
+    const sc = engine.shapeCount();
+    const tk = engine.tick;
+
+    let html = '<style>' + themeCSS + wmCSS + termCSS + `
+    .app-content { width: 100%; height: 100%; overflow: auto; }
+    .terminal-window { width: 100%; height: 100%; display: flex; flex-direction: column; }
+    .terminal-window #output { flex: 1; overflow-y: auto; padding: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+    .terminal-window #input-line { display: flex; padding: 4px 8px; border-top: 1px solid var(--border, #333); font-family: monospace; font-size: 13px; }
+    .terminal-window #input-line .prompt { color: var(--prompt, #4af); margin-right: 8px; }
+    .terminal-window #input-line input { flex: 1; background: none; border: none; color: var(--fg, #e0e0e0); font: inherit; outline: none; }
+    ` + '</style>';
+
+    // Statusbar
+    html += '<div id="statusbar">';
+    html += '<div id="statusbar-left">';
+    html += '<span class="ws-indicator active" data-ws="1">1</span>';
+    html += '<span class="ws-indicator" data-ws="2">2</span>';
+    html += '<span class="ws-indicator" data-ws="3">3</span>';
+    html += '</div>';
+    html += '<div id="statusbar-center">shape://</div>';
+    html += '<div id="statusbar-right"><span>' + sc + ' shapes</span><span>tick ' + tk + '</span></div>';
+    html += '</div>';
+
+    // Workspace with windows
+    html += '<div id="workspace"><div class="workspace active" data-ws="1"><div class="split hsplit">';
+
+    for (const appName of defaultApps) {
+      const focused = appName === defaultApps[0] ? ' focused' : '';
+      html += '<div class="window' + focused + '" data-app="' + appName + '">';
+      html += '<div class="window-titlebar"><span class="window-title">' + appName + '</span>';
+      html += '<span class="window-controls"><button class="win-btn close" title="close">&times;</button></span></div>';
+      html += '<div class="window-content">';
+
+      if (appName === 'shell') {
+        // Inline terminal
+        html += '<div class="terminal-window">';
+        html += '<div id="output"><div class="welcome">Shape Shell. Type \'help\' for commands.</div></div>';
+        html += '<div id="input-line"><span class="prompt">shape$ </span>';
+        html += '<input type="text" id="terminal-input" autocomplete="off" autofocus></div>';
+        html += '</div>';
+      } else if (appName === 'browser') {
+        // Render the browser app page
+        const browserCSS = engine.getShape('os.render.browser.style')?.character.content || '';
+        const browserBody = engine.getShape('os.render.browser.body')?.character.content || '';
+        html += '<div class="app-content"><style>' + browserCSS + '</style>' + browserBody + '</div>';
+      } else {
+        // Generic app
+        const appCSS = engine.getShape('os.render.' + appName + '.style')?.character.content || '';
+        const appBody = engine.getShape('os.render.' + appName + '.body')?.character.content || '';
+        html += '<div class="app-content"><style>' + appCSS + '</style>' + appBody + '</div>';
+      }
+
+      html += '</div></div>';
     }
 
+    html += '</div></div></div>';
+
+    // Launcher
+    html += '<div id="launcher" style="display:none"><div class="launcher-backdrop"></div><div class="launcher-content">';
+    html += '<input type="text" id="launcher-input" placeholder="Search apps..." autofocus>';
+    html += '<div class="launcher-results">';
+    for (const s of engine.allShapes()) {
+      if (s.character.dimensions.type === 'app') {
+        const name = s.character.dimensions.name || s.id.replace('os.app.', '');
+        const key = s.id.startsWith('os.app.') ? s.id.slice(7) : s.id;
+        html += '<div class="launcher-item" data-app="' + key + '">' + name + '</div>';
+      }
+    }
+    html += '</div></div></div>';
+
+    desktop.innerHTML = html;
+
+    // --- Wire terminal ---
+    const termInput = desktop.querySelector('#terminal-input');
+    const termOutput = desktop.querySelector('#output');
+    if (termInput && termOutput) {
+      termInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const line = termInput.value;
+          termInput.value = '';
+
+          // Echo command
+          const cmdLine = document.createElement('div');
+          cmdLine.className = 'cmd-line';
+          cmdLine.textContent = 'shape$ ' + line;
+          termOutput.appendChild(cmdLine);
+
+          // Execute
+          const output = execShell(line);
+          if (output) {
+            const outEl = document.createElement('div');
+            outEl.className = 'cmd-output';
+            outEl.textContent = output;
+            termOutput.appendChild(outEl);
+          }
+
+          termOutput.scrollTop = termOutput.scrollHeight;
+        }
+      });
+      termInput.focus();
+    }
+
+    // --- Wire window focus ---
+    desktop.querySelectorAll('.window').forEach(win => {
+      win.addEventListener('mousedown', () => {
+        desktop.querySelectorAll('.window').forEach(w => w.classList.remove('focused'));
+        win.classList.add('focused');
+      });
+    });
+
+    // --- Wire launcher ---
+    const launcher = desktop.querySelector('#launcher');
+    const launcherInput = desktop.querySelector('#launcher-input');
+
+    function openLauncher() { launcher.style.display = ''; launcherInput.value = ''; launcherInput.focus(); }
+    function closeLauncher() { launcher.style.display = 'none'; }
+
+    if (launcherInput) {
+      launcherInput.addEventListener('input', () => {
+        const q = launcherInput.value.toLowerCase();
+        desktop.querySelectorAll('.launcher-item').forEach(item => {
+          item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      });
+      launcherInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLauncher();
+      });
+    }
+    if (desktop.querySelector('.launcher-backdrop')) {
+      desktop.querySelector('.launcher-backdrop').addEventListener('click', closeLauncher);
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ' ') { e.preventDefault(); launcher.style.display === 'none' ? openLauncher() : closeLauncher(); }
+    });
+
+    // Idle timeout
+    let idleTimer;
+    function resetIdle() { clearTimeout(idleTimer); idleTimer = setTimeout(() => location.reload(), 30 * 60 * 1000); }
     document.addEventListener('mousemove', resetIdle);
     document.addEventListener('keydown', resetIdle);
-    document.addEventListener('click', resetIdle);
     resetIdle();
-  }
-
-  function loadPage(path) {
-    const result = handleRequest('GET', path, '');
-    if (result.status !== 200) { osFrame.srcdoc = result.body; return; }
-
-    // Replace iframe src="/..." with data-route="/..." so the browser
-    // never fetches from the host. Content is rendered after DOM load.
-    const html = result.body.replace(/(<iframe[^>]*)\ssrc="(\/[^"]*)"/g, '$1 data-route="$2"');
-    osFrame.srcdoc = html;
-    osFrame.addEventListener('load', () => patchFrame(osFrame.contentWindow), { once: true });
-  }
-
-  function patchFrame(win) {
-    if (!win) return;
-
-    // Render all data-route iframes through the shape engine.
-    // Content is set via the DOM srcdoc property (no escaping needed).
-    win.document.querySelectorAll('iframe[data-route]').forEach(iframe => {
-      const route = iframe.getAttribute('data-route');
-      const result = handleRequest('GET', route, '');
-      if (result.status === 200) {
-        iframe.srcdoc = result.body;
-      }
-    });
-
-    // Intercept fetch for dynamic requests (AJAX from app scripts)
-    const originalFetch = win.fetch;
-    win.fetch = async function(url, options = {}) {
-      let urlStr = typeof url === 'string' ? url : url.toString();
-      try {
-        const parsed = new URL(urlStr, win.location.href);
-        if (parsed.origin !== win.location.origin && parsed.protocol !== 'blob:') return originalFetch.call(win, url, options);
-        urlStr = parsed.pathname + parsed.search;
-      } catch(e) {}
-      const method = (options.method || 'GET').toUpperCase();
-      let body = '';
-      if (options.body) body = typeof options.body === 'string' ? options.body : await options.body.text();
-      const result = handleRequest(method, urlStr, body);
-      return new Response(result.body, { status: result.status, headers: { 'Content-Type': result.contentType } });
-    };
-
-    // Intercept link clicks
-    win.document.addEventListener('click', (e) => {
-      const a = e.target.closest('a');
-      if (!a || !a.href) return;
-      try { const url = new URL(a.href); if (url.origin === win.location.origin) { e.preventDefault(); loadPage(url.pathname + url.search); } } catch(err) {}
-    });
-
-    // Intercept form submissions
-    win.document.addEventListener('submit', (e) => {
-      const form = e.target;
-      if (form.method && form.method.toUpperCase() === 'POST') {
-        e.preventDefault();
-        const body = new URLSearchParams(new FormData(form)).toString();
-        const result = handleRequest('POST', form.action || '/', body);
-        osFrame.srcdoc = result.body;
-      }
-    });
   }
 })();
 </script>
