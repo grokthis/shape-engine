@@ -328,13 +328,62 @@ func (ev *evaluator) execTopFor(n *ForStmt) error {
 			}
 			start, end = sv.num, ev2.num
 		}
-		// Reuse a single value for the counter. No allocation per iteration.
+
+		// Pre-locate the counter in scope. Write once, then mutate via pointer.
 		counter := intVal(start)
+		ev.scope[n.Name] = counter
+
+		// Detect accumulator pattern in body: set ACC = ACC op (COUNTER or CONST)
+		// If matched, run as pure native loop with zero map ops per iteration.
+		if len(n.Body) == 1 {
+			if setStmt, ok := n.Body[0].(*SetStmt); ok {
+				if binop, ok := setStmt.Expr.(*BinOp); ok {
+					if ident, ok := binop.Left.(*Ident); ok && ident.Name == setStmt.Name {
+						op := binop.Op
+						if op == "+" || op == "-" || op == "*" {
+							accVal, hasAcc := ev.scope[setStmt.Name]
+							if hasAcc && accVal.kind == "int" {
+								// Right side: loop variable or constant?
+								useCounter := false
+								constVal := 0
+								if rident, ok := binop.Right.(*Ident); ok && rident.Name == n.Name {
+									useCounter = true
+								} else if intlit, ok := binop.Right.(*IntLit); ok {
+									constVal = intlit.Value
+								} else {
+									goto generalLoop
+								}
+								a := accVal.num
+								for i := start; i < end; i++ {
+									rv := i
+									if !useCounter {
+										rv = constVal
+									}
+									switch op {
+									case "+":
+										a += rv
+									case "-":
+										a -= rv
+									case "*":
+										a *= rv
+									}
+								}
+								ev.scope[setStmt.Name] = intVal(a)
+								ev.scope[n.Name] = intVal(end - 1)
+								return nil
+							}
+						}
+					}
+				}
+			}
+		}
+
+	generalLoop:
+
+		// General range loop with counter mutation.
 		for i := start; i < end; i++ {
 			counter.num = i
-			if counter.n != nil {
-				counter.n = nil // force lazy re-creation only if needed
-			}
+			counter.n = nil
 			ev.scope[n.Name] = counter
 			for _, stmt := range n.Body {
 				err := ev.execTop(stmt)
