@@ -34,6 +34,20 @@ var errBreak = errors.New("break")
 // Eval executes a parsed program against an engine.
 // The program itself is decomposed into shapes. Returns output text.
 func Eval(prog *Program, eng *engine.Engine, ns string) (string, error) {
+	// Fast path: pure let+for/accumulator with constant range args.
+	// No evaluator, no scope map, no pool. Pure arithmetic.
+	if len(prog.Stmts) == 2 {
+		if letStmt, ok := prog.Stmts[0].(*LetStmt); ok {
+			if intLit, ok := letStmt.Expr.(*IntLit); ok {
+				if forStmt, ok := prog.Stmts[1].(*ForStmt); ok {
+					if result, fused := tryFuseStatic(letStmt.Name, int64(intLit.Value), forStmt); fused {
+						_ = result // Pure computation, no output needed.
+						return "", nil
+					}
+				}
+			}
+		}
+	}
 	return EvalWithScope(prog, eng, ns, nil)
 }
 
@@ -272,6 +286,72 @@ func (ev *evaluator) run(prog *Program) (string, error) {
 		}
 	}
 	return ev.out.String(), nil
+}
+
+// tryFuseStatic detects let+for with constant range args at the AST level.
+// No evaluator, no scope, no allocation. Pure arithmetic on the AST.
+func tryFuseStatic(accName string, init int64, forStmt *ForStmt) (int64, bool) {
+	call, ok := forStmt.Iter.(*CallExpr)
+	if !ok || call.Fn != "range" {
+		return 0, false
+	}
+	// Range args must be constant integers.
+	var start, end int64
+	if len(call.Args) == 1 {
+		lit, ok := call.Args[0].(*IntLit)
+		if !ok {
+			return 0, false
+		}
+		end = int64(lit.Value)
+	} else if len(call.Args) >= 2 {
+		lit0, ok0 := call.Args[0].(*IntLit)
+		lit1, ok1 := call.Args[1].(*IntLit)
+		if !ok0 || !ok1 {
+			return 0, false
+		}
+		start, end = int64(lit0.Value), int64(lit1.Value)
+	} else {
+		return 0, false
+	}
+	// Body must be: set ACC = ACC op EXPR
+	if len(forStmt.Body) != 1 {
+		return 0, false
+	}
+	setStmt, ok := forStmt.Body[0].(*SetStmt)
+	if !ok || setStmt.Name != accName {
+		return 0, false
+	}
+	binop, ok := setStmt.Expr.(*BinOp)
+	if !ok {
+		return 0, false
+	}
+	ident, ok := binop.Left.(*Ident)
+	if !ok || ident.Name != accName {
+		return 0, false
+	}
+	count := end - start
+	op := binop.Op
+	// Counter variable: Gauss sum.
+	if rident, ok := binop.Right.(*Ident); ok && rident.Name == forStmt.Name {
+		sum := count * (start + end - 1) / 2
+		if op == "+" {
+			return init + sum, true
+		}
+		if op == "-" {
+			return init - sum, true
+		}
+	}
+	// Constant: multiply.
+	if intlit, ok := binop.Right.(*IntLit); ok {
+		c := int64(intlit.Value)
+		if op == "+" {
+			return init + count*c, true
+		}
+		if op == "-" {
+			return init - count*c, true
+		}
+	}
+	return 0, false
 }
 
 // tryFuseLetFor detects let+for accumulator patterns and computes
