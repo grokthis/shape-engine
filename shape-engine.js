@@ -268,15 +268,26 @@ function parse(src) {
     skipNL(); expect('{'); skipNL();
     while (peek().typ !== '}' && !atEnd()) {
       if (peek().typ === 'string') { decl.content = next().val; skipNL(); continue; }
-      if (peek().typ !== 'ident') { skipNL(); continue; }
-      const key = next().val; expect(':');
+      if (peek().typ !== 'ident') { next(); skipNL(); continue; } // skip unknown tokens
+      const key = next().val;
+      if (peek().typ !== ':') { skipNL(); continue; } // bare ident without colon, skip
+      next(); // consume ':'
       if (key === 'layer') { decl.layer = parseInt(next().val) || 0; }
       else if (key === 'fn') { decl.fn = expect('ident').val; }
       else if (key === 'deps') { decl.deps.push(...parseIdList()); }
       else if (key === 'from') { decl.from = parseIdList(); }
       else if (key === 'produces') { decl.produces = parseIdList(); }
       else if (key === 'content') { decl.content = expect('string').val; }
-      else { decl.dims[key] = next().val; }
+      else {
+        // Consume all tokens until newline as the dimension value.
+        // This handles values like /desktop, text/html; charset=utf-8, etc.
+        let val = '';
+        while (peek().typ !== 'nl' && peek().typ !== '}' && !atEnd()) {
+          if (val) val += ' ';
+          val += next().val;
+        }
+        decl.dims[key] = val;
+      }
       skipNL();
     }
     expect('}');
