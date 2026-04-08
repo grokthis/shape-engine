@@ -236,7 +236,14 @@ The structural shortcut works identically everywhere:
 | Python (CPython) | 19,146 ns | 74 ns | 257x |
 | Perl | 17,471 ns | 74 ns | 237x |
 | Go | 321 ns | 10.7 ns | 30x |
+| Lua | 4,725 ns | 23 ns | 208x |
+| PHP | 7,225 ns | 40 ns | 183x |
+| Rust (LLVM) | ~0.3 ns | ~0.3 ns | ~1x |
 | FPGA (est.) | ~1,000 ns | ~1 ns | 1,000x |
+
+Rust is special: LLVM already does partial structural recognition (vectorization, loop idiom detection). Both paths converge at the hardware floor (~0.3 ns). Rust IS as fast as the shape engine because LLVM IS a partial shape engine.
+
+**12 substrates.** Every interpreted language's shape engine beats compiled Go native. The formula erases the language hierarchy.
 
 Nine substrates. Same structural optimization everywhere. The native loop iterates. The shape engine computes the formula. The compiled languages (C, Java, JS, Go) all produce the same ~320 ns native loop. The interpreted languages (Ruby, Python, Perl) are 50-70x slower natively, but the shape formula brings them to within 3x of compiled Go.
 
