@@ -35,6 +35,10 @@ type Engine struct {
 	// Reverse dependency index: for each shape, which shapes depend on it.
 	dependents map[shape.ID][]shape.ID
 
+	// Children index: for each prefix, the direct child segment names.
+	// "os.shell" -> ["cmd", "..."] (the unique next-level segments).
+	children map[string]map[string]bool
+
 	// tick is the global tick counter. Every Edit increments this.
 	// Every shape touched by the wave gets stamped with the current tick.
 	// This is a structural position, not a timestamp.
@@ -65,6 +69,7 @@ func New() *Engine {
 		shapes:     make(map[shape.ID]*shape.Shape),
 		transforms: transform.NewRegistry(),
 		dependents: make(map[shape.ID][]shape.ID),
+		children:   make(map[string]map[string]bool),
 		ext:        make(map[string]interface{}),
 	}
 }
@@ -163,6 +168,32 @@ func (e *Engine) AddShape(s *shape.Shape) {
 	for _, dep := range s.Structure.Transformation.Deps {
 		e.dependents[dep] = append(e.dependents[dep], s.ID)
 	}
+
+	// Index children: each dot-separated segment registers with its parent prefix.
+	id := string(s.ID)
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] == '.' {
+			parent := id[:i]
+			child := id[i+1:]
+			// Only the immediate next segment, not the full rest.
+			if dot := indexByte(child, '.'); dot >= 0 {
+				child = child[:dot]
+			}
+			if e.children[parent] == nil {
+				e.children[parent] = make(map[string]bool)
+			}
+			e.children[parent][child] = true
+			break
+		}
+	}
+	// Top-level: shapes without dots are children of ""
+	if indexByte(id, '.') < 0 {
+		if e.children[""] == nil {
+			e.children[""] = make(map[string]bool)
+		}
+		e.children[""][id] = true
+	}
+
 	e.recordMoment("add", s.ID, nil)
 	e.mu.Unlock()
 
@@ -489,6 +520,31 @@ func (e *Engine) Dependents(id shape.ID) []shape.ID {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.dependents[id]
+}
+
+// Children returns the direct child segment names for a prefix.
+// O(1) lookup from the children index.
+func (e *Engine) Children(prefix string) []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	kids := e.children[prefix]
+	if kids == nil {
+		return nil
+	}
+	result := make([]string, 0, len(kids))
+	for k := range kids {
+		result = append(result, k)
+	}
+	return result
+}
+
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 // ShapeCount returns the number of shapes in the engine.

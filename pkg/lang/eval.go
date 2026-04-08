@@ -288,6 +288,48 @@ func (ev *evaluator) execTopIf(n *IfStmt) error {
 
 // execTopFor handles for at top level (outside fn body).
 func (ev *evaluator) execTopFor(n *ForStmt) error {
+	// Structural shortcut: for NAME in range(N) or range(A, B)
+	// uses a native counter. No list materialization, no allocation per step.
+	if call, ok := n.Iter.(*CallExpr); ok && call.Fn == "range" {
+		start, end := 0, 0
+		if len(call.Args) == 1 {
+			v, err := ev.evalExpr(call.Args[0])
+			if err != nil {
+				return err
+			}
+			end = v.num
+		} else if len(call.Args) >= 2 {
+			sv, err := ev.evalExpr(call.Args[0])
+			if err != nil {
+				return err
+			}
+			ev2, err := ev.evalExpr(call.Args[1])
+			if err != nil {
+				return err
+			}
+			start, end = sv.num, ev2.num
+		}
+		// Reuse a single value for the counter. No allocation per iteration.
+		counter := intVal(start)
+		for i := start; i < end; i++ {
+			counter.num = i
+			if counter.n != nil {
+				counter.n = nil // force lazy re-creation only if needed
+			}
+			ev.scope[n.Name] = counter
+			for _, stmt := range n.Body {
+				err := ev.execTop(stmt)
+				if errors.Is(err, errBreak) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
 	iter, err := ev.evalExpr(n.Iter)
 	if err != nil {
 		return err
@@ -296,7 +338,11 @@ func (ev *evaluator) execTopFor(n *ForStmt) error {
 	for _, item := range items {
 		ev.scope[n.Name] = item
 		for _, stmt := range n.Body {
-			if err := ev.execTop(stmt); err != nil {
+			err := ev.execTop(stmt)
+			if errors.Is(err, errBreak) {
+				return nil
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -418,6 +464,38 @@ func (ev *evaluator) execLet(l *LetStmt) error {
 
 // execSet mutates an existing variable binding.
 func (ev *evaluator) execSet(s *SetStmt) error {
+	// Structural shortcut: set NAME = NAME op EXPR where both are ints.
+	// Mutate the accumulator in place. No allocation.
+	if binop, ok := s.Expr.(*BinOp); ok {
+		if ident, ok := binop.Left.(*Ident); ok && ident.Name == s.Name {
+			if existing, ok := ev.scope[s.Name]; ok && existing.kind == "int" {
+				right, err := ev.evalExpr(binop.Right)
+				if err != nil {
+					return err
+				}
+				if right.kind == "int" {
+					switch binop.Op {
+					case "+":
+						existing.num += right.num
+						existing.n = nil
+						ev.scope[s.Name] = existing
+						return nil
+					case "-":
+						existing.num -= right.num
+						existing.n = nil
+						ev.scope[s.Name] = existing
+						return nil
+					case "*":
+						existing.num *= right.num
+						existing.n = nil
+						ev.scope[s.Name] = existing
+						return nil
+					}
+				}
+			}
+		}
+	}
+
 	v, err := ev.evalExpr(s.Expr)
 	if err != nil {
 		return err
@@ -887,35 +965,15 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 
 	case "children":
 		// children(prefix) → list of next-level segment strings.
+		// O(1) lookup from engine's children index.
 		if len(args) < 1 {
 			return nilVal(), fmt.Errorf("children: need 1 arg")
 		}
 		prefix := args[0].String()
-		seen := make(map[string]bool)
-		var segments []value
-		for _, s := range ev.eng.Shapes() {
-			id := string(s.ID)
-			var seg string
-			if prefix == "" {
-				dot := text.Index(id, ".")
-				if dot >= 0 {
-					seg = id[:dot]
-				} else {
-					seg = id
-				}
-			} else if text.HasPrefix(id, prefix+".") {
-				rest := id[len(prefix)+1:]
-				dot := text.Index(rest, ".")
-				if dot >= 0 {
-					seg = rest[:dot]
-				} else {
-					seg = rest
-				}
-			} else if id == prefix {
-				continue // skip the prefix shape itself
-			} else {
-				continue
-			}
+		kids := ev.eng.Children(prefix)
+		segments := make([]value, 0, len(kids))
+		seen := make(map[string]bool, len(kids))
+		for _, seg := range kids {
 			if seg != "" && !seen[seg] {
 				seen[seg] = true
 				segments = append(segments, strVal(seg))
