@@ -378,7 +378,11 @@ function parse(src) {
   function parseCmp() { let l = parseAdd(); while (peek().typ === '>' || peek().typ === '<' || peek().typ === '>=' || peek().typ === '<=') { const op = next().val; l = { type: 'binop', op, left: l, right: parseAdd() }; } return l; }
   function parseAdd() { let l = parseMul(); while (peek().typ === '+' || peek().typ === '-') { const op = next().val; l = { type: 'binop', op, left: l, right: parseMul() }; } return l; }
   function parseMul() { let l = parseUnary(); while (peek().typ === '*' || peek().typ === '/' || peek().typ === '%') { const op = next().val; l = { type: 'binop', op, left: l, right: parseUnary() }; } return l; }
-  function parseUnary() { if (peek().typ === '!') { next(); return { type: 'unary', op: '!', operand: parsePrimary() }; } return parsePrimary(); }
+  function parseUnary() {
+    if (peek().typ === '!') { next(); return { type: 'unary', op: '!', operand: parsePrimary() }; }
+    if (peek().typ === '-') { next(); const o = parsePrimary(); if (o.type === 'int') return { type: 'int', value: -o.value }; if (o.type === 'float') return { type: 'float', value: -o.value }; return { type: 'binop', op: '-', left: { type: 'int', value: 0 }, right: o }; }
+    return parsePrimary();
+  }
 
   function parsePrimary() {
     const t = peek();
@@ -537,7 +541,7 @@ function createEvaluator(engine) {
       case '+': return (typeof left === 'number' && typeof right === 'number') ? left + right : str(left) + str(right);
       case '-': return num(left) - num(right);
       case '*': return num(left) * num(right);
-      case '/': { const d = num(right); return d === 0 ? 0 : num(left) / d; }
+      case '/': { const d = num(right); if (d === 0) return 0; const r = num(left) / d; return (Number.isInteger(left) && Number.isInteger(right)) ? Math.trunc(r) : r; }
       case '%': { const d = num(right); return d === 0 ? 0 : num(left) % d; }
       case '==': return str(left) === str(right);
       case '!=': return str(left) !== str(right);

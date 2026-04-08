@@ -6,38 +6,30 @@
 <title>Shape OS</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-
+body { background: #0a0a0a; color: #e0e0e0; height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 #loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
 #loading h1 { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
 #loading .status { font-size: 14px; color: #888; }
 #loading .bar { width: 200px; height: 2px; background: #222; border-radius: 1px; overflow: hidden; }
 #loading .bar-fill { height: 100%; background: #4af; width: 0%; transition: width 0.3s; }
-
 #prompt-screen { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
 #prompt-screen h2 { font-size: 20px; font-weight: 300; }
 #prompt-screen input { background: #111; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; font-size: 16px; border-radius: 4px; outline: none; width: 280px; text-align: center; }
 #prompt-screen input:focus { border-color: #4af; }
 #prompt-screen .hint { font-size: 12px; color: #666; }
-
-#desktop { display: none; width: 100%; height: 100vh; overflow: hidden; position: relative; }
 </style>
 </head>
 <body>
-
 <div id="loading">
   <h1>SHAPE OS</h1>
   <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
   <div class="status" id="load-status">loading engine...</div>
 </div>
-
 <div id="prompt-screen">
   <h2>enter a username</h2>
   <input id="username" type="text" placeholder="guest" autocomplete="off" autofocus>
   <div class="hint">sandbox resets after 30 minutes of idle</div>
 </div>
-
-<div id="desktop"></div>
 
 <script src="shape-engine.js"></script>
 <script>
@@ -47,7 +39,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   const loading = document.getElementById('loading');
   const promptScreen = document.getElementById('prompt-screen');
   const usernameInput = document.getElementById('username');
-  const desktop = document.getElementById('desktop');
 
   let engine;
 
@@ -75,18 +66,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     if (e.key === 'Enter') startOS(usernameInput.value.trim() || 'guest');
   });
 
-  // --- Render a shape's content as HTML ---
+  // --- Render a shape's content and return the output ---
   function renderShape(shapeId, scope) {
     const s = engine.getShape(shapeId);
     if (!s || !s.character.content) return '';
     try {
       const prog = parse(s.character.content);
       const ev = createEvaluator(engine);
-      if (scope) { for (const [k, v] of Object.entries(scope)) ev.setScope(k, v); }
+      if (scope) for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
       ev.run(prog);
       return ev.getOutput();
     } catch(e) {
-      return '<pre style="color:#f77">Error in ' + shapeId + ': ' + e.message + '</pre>';
+      return 'Error in ' + shapeId + ': ' + e.message;
     }
   }
 
@@ -94,207 +85,102 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   function execShell(line) {
     line = line.trim();
     if (!line) return '';
-
     if (line.includes(' | ')) {
       const segments = line.split(' | ');
       let output = '';
-      for (let seg of segments) {
-        seg = seg.trim();
-        if (output) seg = seg + ' ' + output;
-        output = execShell(seg);
-      }
+      for (let seg of segments) { seg = seg.trim(); if (output) seg += ' ' + output; output = execShell(seg); }
       return output;
     }
-
     const parts = line.split(/\s+/);
-    const cmd = parts[0];
-    const argList = parts.slice(1);
-
+    const cmd = parts[0], argList = parts.slice(1);
     const prefix = engine.getShape('os.session.shell.prefix')?.character.content || '';
     const home = engine.getShape('os.config.shell.home')?.character.content || '';
-
     const cmdShape = engine.getShape('os.shell.cmd.' + cmd);
     if (cmdShape && cmdShape.character.dimensions.type === 'exec') {
       const scope = { args: argList.join(' '), line, cmd, prefix, home };
       argList.forEach((a, i) => scope['arg' + i] = a);
       return renderShape('os.shell.cmd.' + cmd, scope);
     }
-
-    // Try as raw shape-lang
     try {
       const prog = parse(line);
       const ev = createEvaluator(engine);
       ev.run(prog);
       return ev.getOutput();
-    } catch(e) {
-      return 'error: ' + e.message + '\n';
-    }
+    } catch(e) { return 'error: ' + e.message + '\n'; }
   }
 
-  // --- Build the desktop ---
+  // --- Handle a route request through the shape engine ---
+  function handleRequest(method, path) {
+    let bestRoute = null, bestLen = 0;
+    for (const s of engine.allShapes()) {
+      if (s.character.dimensions.type !== 'route') continue;
+      const rm = s.character.dimensions.method;
+      if (rm && rm.toUpperCase() !== method) continue;
+      const rp = s.character.dimensions.path;
+      if (rp === path) { bestRoute = s; break; }
+      if (matchPath(rp, path) && rp.split('/').length > bestLen) { bestRoute = s; bestLen = rp.split('/').length; }
+    }
+    if (!bestRoute) return '';
+    const handler = engine.getShape(bestRoute.character.dimensions.handler);
+    if (!handler) return '';
+    const scope = { ...bestRoute.character.dimensions, method, path };
+    return renderShape(handler.id, scope);
+  }
+
+  function matchPath(pattern, path) {
+    if (!pattern) return false;
+    const pp = pattern.split('/'), tp = path.split('/');
+    for (let i = 0; i < pp.length; i++) {
+      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) return i < tp.length;
+      if (i >= tp.length) return false;
+      if (!pp[i].startsWith('{') && pp[i] !== tp[i]) return false;
+    }
+    return pp.length === tp.length;
+  }
+
+  // --- Start the OS: render desktop from shapes ---
   function startOS(username) {
     promptScreen.style.display = 'none';
-    desktop.style.display = 'flex';
 
-    // Expose for console debugging
-    window.shapeEngine = { engine, execShell, renderShape };
+    // The desktop handler renders the full page HTML from shapes.
+    // We render it and replace the entire document body.
+    const html = handleRequest('GET', '/desktop');
 
-    // Get theme CSS
-    const themeRef = engine.getShape('os.config.desktop.theme')?.character.content || '';
-    const themeCSS = themeRef ? (engine.getShape(themeRef)?.character.content || '') : '';
-
-    // Get WM CSS
-    const wmRef = engine.getShape('os.config.desktop.wm')?.character.content || 'os.wm.floating';
-    const wmCSS = engine.getShape(wmRef + '.style')?.character.content || '';
-    const wmJS = engine.getShape(wmRef + '.script')?.character.content || '';
-
-    // Get terminal render pieces
-    const termCSS = engine.getShape('os.render.terminal.style')?.character.content || '';
-    const termBody = engine.getShape('os.render.terminal.body')?.character.content || '';
-    const termJS = engine.getShape('os.render.terminal.script')?.character.content || '';
-
-    // Default apps
-    const defaultApps = (engine.getShape('os.config.desktop.default.apps')?.character.content || 'shell').split(',').map(s => s.trim());
-
-    // Build desktop HTML directly
-    const sc = engine.shapeCount();
-    const tk = engine.tick;
-
-    let html = '<style>' + themeCSS + wmCSS + termCSS + `
-    #desktop { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
-    #workspace { flex: 1; position: relative; }
-    .app-content { width: 100%; height: 100%; overflow: auto; }
-    .terminal-window { width: 100%; height: 100%; display: flex; flex-direction: column; }
-    .terminal-window #output { flex: 1; overflow-y: auto; padding: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
-    .terminal-window #input-line { display: flex; padding: 4px 8px; border-top: 1px solid var(--border, #333); font-family: monospace; font-size: 13px; }
-    .terminal-window #input-line .prompt { color: var(--prompt, #4af); margin-right: 8px; }
-    .terminal-window #input-line input { flex: 1; background: none; border: none; color: var(--fg, #e0e0e0); font: inherit; outline: none; }
-    ` + '</style>';
-
-    // Statusbar
-    html += '<div id="statusbar">';
-    html += '<div id="statusbar-left">';
-    html += '<span class="ws-indicator active" data-ws="1">1</span>';
-    html += '<span class="ws-indicator" data-ws="2">2</span>';
-    html += '<span class="ws-indicator" data-ws="3">3</span>';
-    html += '</div>';
-    html += '<div id="statusbar-center">shape://</div>';
-    html += '<div id="statusbar-right"><span>' + sc + ' shapes</span><span>tick ' + tk + '</span></div>';
-    html += '</div>';
-
-    // Workspace with absolutely positioned windows
-    html += '<div id="workspace">';
-
-    const winCount = defaultApps.length;
-    const winWidth = Math.floor(100 / winCount);
-
-    for (let i = 0; i < defaultApps.length; i++) {
-      const appName = defaultApps[i];
-      const focused = i === 0 ? ' focused' : '';
-      const left = i * winWidth;
-      const style = 'position:absolute;top:0;left:' + left + '%;width:' + winWidth + '%;height:100%;';
-
-      html += '<div class="window' + focused + '" data-app="' + appName + '" style="' + style + '">';
-      html += '<div class="window-titlebar"><span class="window-title">' + appName + '</span>';
-      html += '<span class="window-controls"><button class="win-btn close" title="close">&times;</button></span></div>';
-      html += '<div class="window-content">';
-
-      if (appName === 'shell') {
-        html += '<div class="terminal-window">';
-        html += '<div id="output"><div class="welcome">Shape Shell. Type \'help\' for commands.</div></div>';
-        html += '<div id="input-line"><span class="prompt">shape$ </span>';
-        html += '<input type="text" id="terminal-input" autocomplete="off" autofocus></div>';
-        html += '</div>';
-      } else {
-        const appCSS = engine.getShape('os.render.' + appName + '.style')?.character.content || '';
-        const appBody = engine.getShape('os.render.' + appName + '.body')?.character.content || '';
-        html += '<div class="app-content"><style>' + appCSS + '</style>' + appBody + '</div>';
-      }
-
-      html += '</div></div>';
+    if (!html) {
+      document.body.innerHTML = '<pre style="padding:20px;color:#f77">Failed to render desktop. No route found for /desktop.</pre>';
+      return;
     }
 
-    html += '</div>';
+    // Replace document content with the shape-rendered desktop.
+    document.open();
+    document.write(html);
+    document.close();
 
-    // Launcher
-    html += '<div id="launcher" style="display:none"><div class="launcher-backdrop"></div><div class="launcher-content">';
-    html += '<input type="text" id="launcher-input" placeholder="Search apps..." autofocus>';
-    html += '<div class="launcher-results">';
-    for (const s of engine.allShapes()) {
-      if (s.character.dimensions.type === 'app') {
-        const name = s.character.dimensions.name || s.id.replace('os.app.', '');
-        const key = s.id.startsWith('os.app.') ? s.id.slice(7) : s.id;
-        html += '<div class="launcher-item" data-app="' + key + '">' + name + '</div>';
-      }
-    }
-    html += '</div></div></div>';
+    // Wire the terminal if present
+    wireTerminal();
 
-    desktop.innerHTML = html;
-
-    // --- Wire terminal ---
-    const termInput = desktop.querySelector('#terminal-input');
-    const termOutput = desktop.querySelector('#output');
-    if (termInput && termOutput) {
-      termInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const line = termInput.value;
-          termInput.value = '';
-
-          // Echo command
-          const cmdLine = document.createElement('div');
-          cmdLine.className = 'cmd-line';
-          cmdLine.textContent = 'shape$ ' + line;
-          termOutput.appendChild(cmdLine);
-
-          // Execute
-          const output = execShell(line);
-          if (output) {
-            const outEl = document.createElement('div');
-            outEl.className = 'cmd-output';
-            outEl.textContent = output;
-            termOutput.appendChild(outEl);
-          }
-
-          termOutput.scrollTop = termOutput.scrollHeight;
-        }
-      });
-      termInput.focus();
-    }
-
-    // --- Wire window focus ---
-    desktop.querySelectorAll('.window').forEach(win => {
+    // Wire window focus
+    document.querySelectorAll('.window').forEach(win => {
       win.addEventListener('mousedown', () => {
-        desktop.querySelectorAll('.window').forEach(w => w.classList.remove('focused'));
+        document.querySelectorAll('.window').forEach(w => w.classList.remove('focused'));
         win.classList.add('focused');
       });
     });
 
-    // --- Wire launcher ---
-    const launcher = desktop.querySelector('#launcher');
-    const launcherInput = desktop.querySelector('#launcher-input');
+    // Override fetch globally so any JS in shapes routes through the engine
+    const originalFetch = window.fetch;
+    window.fetch = async function(url, options = {}) {
+      let urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('/')) {
+        const method = (options.method || 'GET').toUpperCase();
+        const body = handleRequest(method, urlStr);
+        return new Response(body, { status: body ? 200 : 404, headers: { 'Content-Type': 'text/html' } });
+      }
+      return originalFetch.call(window, url, options);
+    };
 
-    function openLauncher() { launcher.style.display = ''; launcherInput.value = ''; launcherInput.focus(); }
-    function closeLauncher() { launcher.style.display = 'none'; }
-
-    if (launcherInput) {
-      launcherInput.addEventListener('input', () => {
-        const q = launcherInput.value.toLowerCase();
-        desktop.querySelectorAll('.launcher-item').forEach(item => {
-          item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
-        });
-      });
-      launcherInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeLauncher();
-      });
-    }
-    if (desktop.querySelector('.launcher-backdrop')) {
-      desktop.querySelector('.launcher-backdrop').addEventListener('click', closeLauncher);
-    }
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ' ') { e.preventDefault(); launcher.style.display === 'none' ? openLauncher() : closeLauncher(); }
-    });
+    // Expose for debugging
+    window.shapeEngine = { engine, execShell, renderShape, handleRequest };
 
     // Idle timeout
     let idleTimer;
@@ -302,6 +188,33 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     document.addEventListener('mousemove', resetIdle);
     document.addEventListener('keydown', resetIdle);
     resetIdle();
+  }
+
+  function wireTerminal() {
+    const input = document.querySelector('#terminal-input') || document.querySelector('input[type="text"]');
+    const output = document.querySelector('#output');
+    if (!input || !output) return;
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const line = input.value;
+      input.value = '';
+
+      const cmdEl = document.createElement('div');
+      cmdEl.textContent = 'shape$ ' + line;
+      cmdEl.style.color = 'var(--fg-dim, #888)';
+      output.appendChild(cmdEl);
+
+      const result = execShell(line);
+      if (result) {
+        const outEl = document.createElement('div');
+        outEl.style.whiteSpace = 'pre-wrap';
+        outEl.textContent = result;
+        output.appendChild(outEl);
+      }
+      output.scrollTop = output.scrollHeight;
+    });
+    input.focus();
   }
 })();
 </script>
