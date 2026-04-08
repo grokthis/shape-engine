@@ -109,18 +109,6 @@ for ws_name in ["1", "2", "3"] {
         }
         set first_window = 0
 
-        // Resolve app URL
-        let app_url = content("os.config.app." + app_name + ".route")
-        if app_url == "" {
-          if app_name == "shell" {
-            set app_url = "/terminal"
-          } else if app_name == "browser" {
-            set app_url = "/"
-          } else {
-            set app_url = "/desktop/app/" + app_name
-          }
-        }
-
         let win_style = ""
         let wl = dim(dep_id, "left")
         if wl != "" {
@@ -130,7 +118,22 @@ for ws_name in ["1", "2", "3"] {
         print("<div class=\"" + win_cls + "\" data-app=\"" + app_name + "\" data-id=\"" + dep_id + "\" style=\"" + win_style + "\">")
         print("<div class=\"window-titlebar\"><span class=\"window-title\">" + app_name + "</span>")
         print("<span class=\"window-controls\"><button class=\"win-btn close\" title=\"close\">&times;</button></span></div>")
-        print("<div class=\"window-content\"><iframe src=\"" + app_url + "\" frameborder=\"0\"></iframe></div>")
+        // Render app content inline from its render shapes.
+        // No iframe. The app's body, style, and script are shapes.
+        let app_style = content("os.render." + app_name + ".style")
+        let app_body = content("os.render." + app_name + ".body")
+        let app_script = content("os.render." + app_name + ".script")
+        print("<div class=\"window-content\">")
+        if app_style != "" {
+          print("<style>" + app_style + "</style>")
+        }
+        if app_body != "" {
+          print(app_body)
+        }
+        if app_script != "" {
+          print("<script>" + app_script + "</script>")
+        }
+        print("</div>")
         print("</div>")
       }
     }
