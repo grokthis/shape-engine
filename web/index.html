@@ -144,7 +144,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     const themeCSS = themeRef ? (engine.getShape(themeRef)?.character.content || '') : '';
 
     // Get WM CSS
-    const wmRef = engine.getShape('os.config.desktop.wm')?.character.content || 'os.wm.tiling';
+    // Use tiling WM for the web demo (single-page, no absolute positioning needed)
+    const wmRef = 'os.wm.tiling';
     const wmCSS = engine.getShape(wmRef + '.style')?.character.content || '';
     const wmJS = engine.getShape(wmRef + '.script')?.character.content || '';
 
