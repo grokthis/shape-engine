@@ -72,7 +72,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   }
 
   barFill.style.width = '100%';
-  loadStatus.textContent = engine.shapeCount() + ' shapes loaded';
+  const sc = engine.shapeCount();
+  loadStatus.textContent = sc + ' shapes loaded';
+  console.log('Shape OS: ' + sc + ' shapes');
+  for (const id of ['os.route.page.desktop', 'os.handler.page.desktop']) {
+    const s = engine.getShape(id);
+    console.log(id + ': ' + (s ? 'OK (' + s.character.content.length + ' chars)' : 'MISSING'));
+  }
+  let rc = 0;
+  for (const s of engine.allShapes()) { if (s.character.dimensions.type === 'route') { console.log('route: ' + s.id + ' path=' + s.character.dimensions.path); rc++; } }
+  console.log(rc + ' routes');
 
   // Show username prompt
   setTimeout(() => {
@@ -251,7 +260,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   }
 
   function loadPage(path) {
+    console.log('loadPage: ' + path);
     const result = handleRequest('GET', path, '');
+    console.log('loadPage result: status=' + result.status + ' body=' + result.body.length + ' chars');
+    if (result.body.length < 200) console.log('body: ' + result.body);
     osFrame.srcdoc = result.body;
     osFrame.addEventListener('load', () => patchFrame(osFrame.contentWindow), { once: true });
   }

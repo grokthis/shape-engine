@@ -99,6 +99,56 @@ class Engine {
 // Layer 2: Lexer
 // ============================================================
 
+// preprocessShape normalizes shape source before lexing.
+// Inside shape { } blocks, bare dimension values (not already quoted,
+// not identifiers, not numbers) get quoted so the lexer handles them.
+//
+// Input:  path: /desktop
+//         content_type: text/html; charset=utf-8
+// Output: path: "/desktop"
+//         content_type: "text/html; charset=utf-8"
+//
+// This is a source-to-source transform. Same structure, canonical form.
+function preprocess(src) {
+  const lines = src.split('\n');
+  let inShape = 0; // brace depth inside shape declaration
+  let inTriple = false;
+  const out = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Track triple-quote strings
+    const tripleCount = (line.match(/"""/g) || []).length;
+    if (tripleCount % 2 === 1) { inTriple = !inTriple; }
+    if (inTriple) { out.push(line); continue; }
+
+    // Track shape braces
+    const trimmed = line.trim();
+    if (trimmed.startsWith('shape ') && trimmed.includes('{')) { inShape++; out.push(line); continue; }
+    if (inShape > 0 && trimmed === '}') { inShape--; out.push(line); continue; }
+
+    if (inShape > 0 && !trimmed.startsWith('//') && !trimmed.startsWith('"')) {
+      // Inside shape body: look for key: value lines
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const key = trimmed.slice(0, colonIdx).trim();
+        const val = trimmed.slice(colonIdx + 1).trim();
+        // Skip if already quoted, a number, a boolean, an ident, or a list
+        if (val && !val.startsWith('"') && !val.startsWith('[') &&
+            !/^[a-zA-Z_][a-zA-Z0-9_.\-*]*$/.test(val) &&
+            !/^\d/.test(val) && val !== 'true' && val !== 'false') {
+          // Quote it
+          const indent = line.match(/^(\s*)/)[1];
+          line = indent + key + ': "' + val.replace(/"/g, '\\"') + '"';
+        }
+      }
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 function lex(src) {
   const tokens = [];
   let pos = 0, line = 1;
@@ -220,7 +270,7 @@ function lex(src) {
 // ============================================================
 
 function parse(src) {
-  const tokens = lex(src);
+  const tokens = lex(preprocess(src));
   let pos = 0;
 
   function peek() { return tokens[pos] || { typ: 'eof', val: '' }; }
@@ -278,16 +328,7 @@ function parse(src) {
       else if (key === 'from') { decl.from = parseIdList(); }
       else if (key === 'produces') { decl.produces = parseIdList(); }
       else if (key === 'content') { decl.content = expect('string').val; }
-      else {
-        // Consume all tokens until newline as the dimension value.
-        // This handles values like /desktop, text/html; charset=utf-8, etc.
-        let val = '';
-        while (peek().typ !== 'nl' && peek().typ !== '}' && !atEnd()) {
-          if (val) val += ' ';
-          val += next().val;
-        }
-        decl.dims[key] = val;
-      }
+      else { decl.dims[key] = next().val; }
       skipNL();
     }
     expect('}');
