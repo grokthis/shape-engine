@@ -137,9 +137,12 @@ Same source code. Same result. **30x faster.** The shape engine sees structure t
 
 | Substrate | Shape engine | Native loop | Speedup | How |
 |---|---|---|---|---|
+| **C (-O2)** | **0.3 ns** | 322 ns | **1073x** | Formula inlined by GCC |
 | **ARM64 assembly** | **0.9 ns** | 322 ns | **358x** | sub + mul + add |
-| **Go** | **10.7 ns** | 321 ns | **30x** | Gauss formula |
-| **JavaScript (V8)** | **20.5 ns** | 365 ns | **17.8x** | Gauss formula, V8 JIT'd |
+| **Go** | **10.7 ns** | 321 ns | **30x** | Static fusion |
+| **JavaScript (V8)** | **16.2 ns** | 365 ns | **22.5x** | Integer type tags, V8 JIT |
+| **Ruby** | **69 ns** | 22,724 ns | **329x** | Direct formula |
+| **Ruby (full eval)** | **497 ns** | 22,724 ns | **45.7x** | AST pattern match |
 
 All native compilers produce the same thing: a loop that iterates 1000 times at ~322 ns. All shape engines produce the same thing: the Gauss sum formula at O(1). The ARM64 shape engine is the floor: 3 instructions, 0.9 ns. The Go and JS shape engines approach it as interpreter overhead decreases.
 
@@ -224,10 +227,11 @@ The structural shortcut works identically everywhere:
 | C (-O2) | 322 ns | 0.3 ns | 1073x |
 | ARM64 assembly | 322 ns | 0.9 ns | 358x |
 | Go | 321 ns | 10.7 ns | 30x |
-| JavaScript (V8) | 365 ns | 20.5 ns | 17.8x |
+| JavaScript (V8) | 365 ns | 16.2 ns | 22.5x |
+| Ruby (CRuby) | 22,724 ns | 69 ns | 329x |
 | FPGA (est.) | ~1000 ns | ~1 ns | 1000x |
 
-Same structural optimization on every substrate. The native loop iterates. The shape engine computes the formula. The C shape engine is fastest (0.3 ns) because GCC -O2 optimizes the formula computation itself to minimal instructions. The ARM64 shape engine (0.9 ns) includes function call overhead. Go (10.7 ns) includes evaluator pattern matching. JS (20.5 ns) includes V8 JIT type checks. All produce the same result.
+Same structural optimization on every substrate. The native loop iterates. The shape engine computes the formula. The overhead per substrate is the cost of pattern recognition in that language's runtime: C inlines it (0.3 ns), Go has type switches (10.7 ns), V8 JIT-compiles it (16.2 ns), Ruby interprets it (69 ns). The formula itself is the same 3 arithmetic operations everywhere.
 
 ### Why shapes are faster
 

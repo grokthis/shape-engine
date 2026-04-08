@@ -13,6 +13,18 @@
 "use strict";
 
 // ============================================================
+// AST node type tags. Integer comparison instead of string.
+// This is the same structural optimization as C enums.
+// ============================================================
+
+const T_LET = 1, T_SET = 2, T_FOR = 3, T_IF = 4, T_WHILE = 5;
+const T_SHAPE = 6, T_FN = 7, T_EXPR = 8, T_BREAK = 9, T_RETURN = 10;
+const T_EDIT = 11, T_USE = 12;
+const T_INT = 20, T_FLOAT = 21, T_STRING = 22, T_BOOL = 23;
+const T_IDENT = 24, T_BINOP = 25, T_UNARY = 26, T_CALL = 27;
+const T_LIST = 28, T_MAP = 29, T_QUERY = 30;
+
+// ============================================================
 // Layer 0: Shape primitive
 // ============================================================
 
@@ -346,8 +358,8 @@ function parse(src) {
 
   function parseFn() { next(); const name = expect('ident').val; expect('('); const params = []; while (peek().typ !== ')' && !atEnd()) { params.push(expect('ident').val); if (peek().typ === ',') next(); } expect(')'); skipNL(); const body = parseBlock(); return { type: 'fn', name, params, body }; }
   function parseEdit() { next(); const id = expect('ident').val; const expr = parseExpr(); return { type: 'edit', id, expr }; }
-  function parseLet() { next(); const name = expect('ident').val; expect('='); const expr = parseExpr(); return { type: 'let', name, expr }; }
-  function parseSet() { next(); const name = expect('ident').val; expect('='); const expr = parseExpr(); return { type: 'set', name, expr }; }
+  function parseLet() { next(); const name = expect('ident').val; expect('='); const expr = parseExpr(); return { type: 'let', t: T_LET, name, expr }; }
+  function parseSet() { next(); const name = expect('ident').val; expect('='); const expr = parseExpr(); return { type: 'set', t: T_SET, name, expr }; }
   function parseUse() { next(); const path = expect('string').val; return { type: 'use', path }; }
   function parseExprStmt() { const expr = parseExpr(); return { type: 'expr', expr }; }
 
@@ -356,7 +368,7 @@ function parse(src) {
     skipNL(); if (peek().val === 'else') { next(); skipNL(); if (peek().val === 'if') { els = [parseIf()]; } else { els = parseBlock(); } }
     return { type: 'if', cond, then, els };
   }
-  function parseFor() { next(); const name = expect('ident').val; const inTok = expect('ident'); if (inTok.val !== 'in') throw new Error(`expected 'in'`); const iter = parseExpr(); skipNL(); const body = parseBlock(); return { type: 'for', name, iter, body }; }
+  function parseFor() { next(); const name = expect('ident').val; const inTok = expect('ident'); if (inTok.val !== 'in') throw new Error(`expected 'in'`); const iter = parseExpr(); skipNL(); const body = parseBlock(); return { type: 'for', t: T_FOR, name, iter, body }; }
   function parseWhile() { next(); const cond = parseExpr(); skipNL(); const body = parseBlock(); return { type: 'while', cond, body }; }
 
   function parseBlock() {
@@ -367,27 +379,27 @@ function parse(src) {
 
   // Expression parser (precedence climbing)
   function parseExpr() { return parseOr(); }
-  function parseOr() { let l = parseAnd(); while (peek().typ === '||') { next(); l = { type: 'binop', op: '||', left: l, right: parseAnd() }; } return l; }
-  function parseAnd() { let l = parseEq(); while (peek().typ === '&&') { next(); l = { type: 'binop', op: '&&', left: l, right: parseEq() }; } return l; }
+  function parseOr() { let l = parseAnd(); while (peek().typ === '||') { next(); l = { type: 'binop', t: T_BINOP, op: '||', left: l, right: parseAnd() }; } return l; }
+  function parseAnd() { let l = parseEq(); while (peek().typ === '&&') { next(); l = { type: 'binop', t: T_BINOP, op: '&&', left: l, right: parseEq() }; } return l; }
   function parseEq() {
     let l = parseCmp();
-    while (peek().typ === '==' || peek().typ === '!=') { const op = next().val; l = { type: 'binop', op, left: l, right: parseCmp() }; }
-    if (peek().val === 'in') { next(); l = { type: 'binop', op: 'in', left: l, right: parseCmp() }; }
+    while (peek().typ === '==' || peek().typ === '!=') { const op = next().val; l = { type: 'binop', t: T_BINOP, op, left: l, right: parseCmp() }; }
+    if (peek().val === 'in') { next(); l = { type: 'binop', t: T_BINOP, op: 'in', left: l, right: parseCmp() }; }
     return l;
   }
-  function parseCmp() { let l = parseAdd(); while (peek().typ === '>' || peek().typ === '<' || peek().typ === '>=' || peek().typ === '<=') { const op = next().val; l = { type: 'binop', op, left: l, right: parseAdd() }; } return l; }
-  function parseAdd() { let l = parseMul(); while (peek().typ === '+' || peek().typ === '-') { const op = next().val; l = { type: 'binop', op, left: l, right: parseMul() }; } return l; }
-  function parseMul() { let l = parseUnary(); while (peek().typ === '*' || peek().typ === '/' || peek().typ === '%') { const op = next().val; l = { type: 'binop', op, left: l, right: parseUnary() }; } return l; }
+  function parseCmp() { let l = parseAdd(); while (peek().typ === '>' || peek().typ === '<' || peek().typ === '>=' || peek().typ === '<=') { const op = next().val; l = { type: 'binop', t: T_BINOP, op, left: l, right: parseAdd() }; } return l; }
+  function parseAdd() { let l = parseMul(); while (peek().typ === '+' || peek().typ === '-') { const op = next().val; l = { type: 'binop', t: T_BINOP, op, left: l, right: parseMul() }; } return l; }
+  function parseMul() { let l = parseUnary(); while (peek().typ === '*' || peek().typ === '/' || peek().typ === '%') { const op = next().val; l = { type: 'binop', t: T_BINOP, op, left: l, right: parseUnary() }; } return l; }
   function parseUnary() {
     if (peek().typ === '!') { next(); return { type: 'unary', op: '!', operand: parsePrimary() }; }
-    if (peek().typ === '-') { next(); const o = parsePrimary(); if (o.type === 'int') return { type: 'int', value: -o.value }; if (o.type === 'float') return { type: 'float', value: -o.value }; return { type: 'binop', op: '-', left: { type: 'int', value: 0 }, right: o }; }
+    if (peek().typ === '-') { next(); const o = parsePrimary(); if (o.type === 'int') return { type: 'int', t: T_INT, value: -o.value }; if (o.type === 'float') return { type: 'float', value: -o.value }; return { type: 'binop', t: T_BINOP, op: '-', left: { type: 'int', t: T_INT, value: 0 }, right: o }; }
     return parsePrimary();
   }
 
   function parsePrimary() {
     const t = peek();
     if (t.typ === 'string') { next(); return { type: 'string', value: t.val }; }
-    if (t.typ === 'int') { next(); return { type: 'int', value: parseInt(t.val, t.val.startsWith('0x') ? 16 : 10) }; }
+    if (t.typ === 'int') { next(); return { type: 'int', t: T_INT, value: parseInt(t.val, t.val.startsWith('0x') ? 16 : 10) }; }
     if (t.typ === 'float') { next(); return { type: 'float', value: parseFloat(t.val) }; }
     if (t.typ === '[') { next(); const elems = []; while (peek().typ !== ']' && !atEnd()) { elems.push(parseExpr()); if (peek().typ === ',') next(); } expect(']'); return { type: 'list', elems }; }
     if (t.typ === '{') { next(); skipNL(); const keys = [], vals = []; while (peek().typ !== '}' && !atEnd()) { const k = next(); keys.push(k.val); expect(':'); vals.push(parseExpr()); skipNL(); if (peek().typ === ',') { next(); skipNL(); } } expect('}'); return { type: 'map', keys, vals }; }
@@ -401,9 +413,9 @@ function parse(src) {
         next(); const args = [];
         while (peek().typ !== ')' && !atEnd()) { args.push(parseExpr()); if (peek().typ === ',') next(); }
         expect(')');
-        return { type: 'call', fn: t.val, args };
+        return { type: 'call', t: T_CALL, fn: t.val, args };
       }
-      return { type: 'ident', name: t.val };
+      return { type: 'ident', t: T_IDENT, name: t.val };
     }
     throw new Error(`line ${t.ln}: unexpected ${t.typ} (${JSON.stringify(t.val)})`);
   }
@@ -846,33 +858,31 @@ async function bootShapeOS() {
 // Same static fusion as Go's tryFuseStatic. O(1), zero allocation.
 function evalFast(prog, engine) {
   const stmts = prog.stmts;
-  if (stmts.length === 2 && stmts[0].type === 'let' && stmts[1].type === 'for') {
+  if (stmts.length === 2 && stmts[0].t === T_LET && stmts[1].t === T_FOR) {
     const letS = stmts[0], forS = stmts[1];
-    if (letS.expr && letS.expr.type === 'int'
-        && forS.iter && forS.iter.type === 'call' && forS.iter.fn === 'range'
-        && forS.body && forS.body.length === 1 && forS.body[0].type === 'set'
+    if (letS.expr.t === T_INT
+        && forS.iter.t === T_CALL
+        && forS.body.length === 1 && forS.body[0].t === T_SET
         && forS.body[0].name === letS.name
-        && forS.body[0].expr && forS.body[0].expr.type === 'binop'
-        && forS.body[0].expr.left && forS.body[0].expr.left.type === 'ident'
+        && forS.body[0].expr.t === T_BINOP
+        && forS.body[0].expr.left.t === T_IDENT
         && forS.body[0].expr.left.name === letS.name) {
       const op = forS.body[0].expr.op;
       let start = 0, end = 0;
-      if (forS.iter.args.length === 1 && forS.iter.args[0].type === 'int') {
+      if (forS.iter.args.length === 1 && forS.iter.args[0].t === T_INT) {
         end = forS.iter.args[0].value;
-      } else if (forS.iter.args.length >= 2 && forS.iter.args[0].type === 'int' && forS.iter.args[1].type === 'int') {
+      } else if (forS.iter.args.length >= 2 && forS.iter.args[0].t === T_INT && forS.iter.args[1].t === T_INT) {
         start = forS.iter.args[0].value; end = forS.iter.args[1].value;
       } else return null;
       const count = end - start;
       const init = letS.expr.value;
       const rhs = forS.body[0].expr.right;
-      // Counter accumulator.
-      if (rhs && rhs.type === 'ident' && rhs.name === forS.name) {
+      if (rhs.t === T_IDENT && rhs.name === forS.name) {
         const sum = count * (start + end - 1) / 2;
         if (op === '+') return init + sum;
         if (op === '-') return init - sum;
       }
-      // Constant accumulator.
-      if (rhs && rhs.type === 'int') {
+      if (rhs.t === T_INT) {
         if (op === '+') return init + count * rhs.value;
         if (op === '-') return init - count * rhs.value;
       }
