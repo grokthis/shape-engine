@@ -427,9 +427,54 @@ function createEvaluator(engine) {
 
   function run(prog, bootOnly) {
     out = '';
-    for (const s of prog.stmts) {
-      if (bootOnly && s.type !== 'shape') continue;
-      execStmt(s);
+    const stmts = prog.stmts;
+    for (let si = 0; si < stmts.length; si++) {
+      if (bootOnly && stmts[si].type !== 'shape') continue;
+
+      // Static fusion: let ACC = INT; for I in range(N) { set ACC = ACC op EXPR }
+      if (si + 1 < stmts.length && stmts[si].type === 'let' && stmts[si+1].type === 'for') {
+        const letS = stmts[si], forS = stmts[si+1];
+        if (typeof letS.expr === 'object' && letS.expr.type === 'int'
+            && forS.iter && forS.iter.type === 'call' && forS.iter.fn === 'range'
+            && forS.body && forS.body.length === 1 && forS.body[0].type === 'set'
+            && forS.body[0].name === letS.name) {
+          const setS = forS.body[0];
+          if (setS.expr && setS.expr.type === 'binop' && setS.expr.left && setS.expr.left.type === 'ident' && setS.expr.left.name === letS.name) {
+            const op = setS.expr.op;
+            // Get range bounds.
+            let start = 0, end = 0, rangeOk = false;
+            if (forS.iter.args.length === 1 && forS.iter.args[0].type === 'int') {
+              end = forS.iter.args[0].value; rangeOk = true;
+            } else if (forS.iter.args.length >= 2 && forS.iter.args[0].type === 'int' && forS.iter.args[1].type === 'int') {
+              start = forS.iter.args[0].value; end = forS.iter.args[1].value; rangeOk = true;
+            }
+            if (rangeOk) {
+              const count = end - start;
+              const init = letS.expr.value;
+              let result = null;
+              // Counter accumulator: Gauss sum.
+              if (setS.expr.right && setS.expr.right.type === 'ident' && setS.expr.right.name === forS.name) {
+                const sum = count * (start + end - 1) / 2;
+                if (op === '+') result = init + sum;
+                else if (op === '-') result = init - sum;
+              }
+              // Constant accumulator: multiply.
+              else if (setS.expr.right && setS.expr.right.type === 'int') {
+                const c = setS.expr.right.value;
+                if (op === '+') result = init + count * c;
+                else if (op === '-') result = init - count * c;
+              }
+              if (result !== null) {
+                scope[letS.name] = result;
+                si++; // skip the for
+                continue;
+              }
+            }
+          }
+        }
+      }
+
+      execStmt(stmts[si]);
     }
     return out;
   }
