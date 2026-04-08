@@ -1,0 +1,42 @@
+# Binaries (root only, not cmd/ subdirectory)
+/shape-engine
+/shape-engine-bin
+/shape
+/shape-server
+/shape-setup
+/propagate
+/browse
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+cover.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development state (not committed)
+.cuivien/
+
+# Build
+dist/
+bin/
+web/shape.wasm
+
+# Local data (DynamoDB Local, etc.)
+data/
+
+# Keys (never commit private keys)
+.shape-key.json
