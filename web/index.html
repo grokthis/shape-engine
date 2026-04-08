@@ -271,6 +271,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   function patchFrame(win) {
     if (!win) return;
 
+    // Render app iframes through the shape engine instead of real URLs.
+    // The desktop HTML has <iframe src="/terminal"> etc. which would 404
+    // on static hosting. Replace with srcdoc rendered by the engine.
+    win.document.querySelectorAll('iframe[src]').forEach(iframe => {
+      const src = iframe.getAttribute('src');
+      if (src && src.startsWith('/')) {
+        const result = handleRequest('GET', src, '');
+        if (result.status === 200) {
+          iframe.removeAttribute('src');
+          iframe.srcdoc = result.body;
+        }
+      }
+    });
+
     // Intercept fetch
     const originalFetch = win.fetch;
     win.fetch = async function(url, options = {}) {
