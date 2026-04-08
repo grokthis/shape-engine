@@ -139,7 +139,7 @@ Same source code. Same result. **30x faster.** The shape engine sees structure t
 |---|---|---|---|---|
 | ARM64 assembly (collapsed) | 0.9 ns | 0.9 ns | 357x faster | 3 instructions |
 | **Go shape-lang (static)** | **10.7 ns** | **10.7 ns** | **30x faster** | Gauss formula |
-| **JS shape-lang (static)** | **56 ns** | **62 ns** | **6.4x faster** | Gauss formula |
+| **JS shape-lang (fast)** | **20.5 ns** | **20.5 ns** | **17.8x faster** | Gauss formula, V8 JIT'd |
 | ARM64 assembly (honest loop) | 322 ns | 322 us | 1x | Iterates |
 | C -O2 (honest loop) | 322 ns | 322 us | 1x | Iterates |
 | Go native | 321 ns | 321 us | 1x | Iterates |
@@ -230,7 +230,7 @@ The structural shortcut works identically everywhere:
 | ARM64 assembly | 322 ns | 0.9 ns | 358x |
 | C (-O2) | 322 ns | 0.3 ns* | 1073x* |
 | Go | 321 ns | 10.7 ns | 30x |
-| JavaScript (V8) | 358 ns | 56 ns | 6.4x |
+| JavaScript (V8) | 365 ns | 20.5 ns | 17.8x |
 | FPGA (est.) | ~1000 ns | ~1 ns | 1000x |
 
 *C -O2 constant-folds when it sees the inputs at compile time. ARM64 assembly is the honest runtime measurement.*
@@ -251,7 +251,9 @@ The shape engine operates on structure, not syntax. It asks: "what IS this compu
 
 This is not a compiler trick. It's a structural property of the system. The same recognition that works for loops works for wave propagation, graph queries, test execution, and hardware synthesis. Structure sees structure. That's the axiom at work.
 
-At N = 1,000,000: JS native takes 1.2 ms. JS shape-lang takes 62 ns. **19,513x faster.** The gap grows with N because O(1) vs O(n) diverges. At any scale, structure wins.
+At N = 1,000,000: JS native takes 1.2 ms. JS shape-lang takes 20.5 ns. **58,537x faster.** The gap grows with N because O(1) vs O(n) diverges. At any scale, structure wins.
+
+V8's JIT compiler helps the shape engine: it compiles the pattern-match path to native ARM64. The formula itself runs at 0.6 ns (pure arithmetic, JIT'd). The 20.5 ns overhead is: AST node type checks, field reads, one scope write. V8 optimizes all of it.
 
 ## Foundation
 
