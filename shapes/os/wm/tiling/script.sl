@@ -42,16 +42,10 @@ shape os.wm.tiling.script : os.wm.tiling {
   function bindWindowEvents(win) {
     // Click anywhere on the window (titlebar, borders, content area)
     win.addEventListener('mousedown', function() { focusWindow(win); });
-    // Detect when the iframe inside gets focus (click inside app content)
-    var iframe = win.querySelector('iframe');
-    if (iframe) {
-      iframe.addEventListener('focus', function() { focusWindow(win); });
-      // Polling fallback: iframes don't always fire focus events reliably
-      iframe.addEventListener('load', function() {
-        try {
-          iframe.contentWindow.addEventListener('mousedown', function() { focusWindow(win); });
-        } catch(e) { /* cross-origin, fall back to focus event */ }
-      });
+    // Focus on click anywhere in window content.
+    var content = win.querySelector('.window-content');
+    if (content) {
+      content.addEventListener('mousedown', function() { focusWindow(win); });
     }
     var closeBtn = win.querySelector('.win-btn.close');
     if (closeBtn) {
@@ -104,36 +98,47 @@ shape os.wm.tiling.script : os.wm.tiling {
   });
 
   function launchApp(name) {
-    var wsNum = currentWs ? currentWs.dataset.ws : '1';
-    Promise.all([
-      fetch('/desktop/window', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({workspace: wsNum, app: name})
-      }).then(function(r) { return r.json(); }),
-      fetch('/desktop/appurl/' + name).then(function(r) { return r.json(); })
-    ]).then(function(results) {
-      var data = results[0];
-      var url = results[1].url;
-      var ws = currentWs;
-      var split = ws.querySelector('.split');
-      if (!split) {
-        split = document.createElement('div');
-        split.className = 'split hsplit';
-        ws.appendChild(split);
+    var ws = currentWs;
+    var split = ws.querySelector('.split');
+    if (!split) {
+      split = document.createElement('div');
+      split.className = 'split hsplit';
+      ws.appendChild(split);
+    }
+
+    // Resolve render prefix from app shape.
+    var renderName = name;
+    if (window.shapeEngine) {
+      var appShape = window.shapeEngine.engine.getShape('os.app.' + name);
+      if (appShape && appShape.character.dimensions.render) {
+        renderName = appShape.character.dimensions.render;
       }
-      var win = document.createElement('div');
-      win.className = 'window focused';
-      win.dataset.app = name;
-      win.dataset.id = data.id;
-      win.innerHTML = '<div class="window-titlebar"><span class="window-title">' + name +
-        '</span><span class="window-controls"><button class="win-btn close">&times;</button></span></div>' +
-        '<div class="window-content"><iframe src="' + url + '" frameborder="0"></iframe></div>';
-      split.appendChild(win);
-      bindWindowEvents(win);
-      document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
-      win.classList.add('focused');
-    });
+    }
+
+    // Render app content structurally from shapes.
+    var appStyle = '', appBody = '', appScript = '';
+    if (window.shapeEngine) {
+      appStyle = window.shapeEngine.renderShape('os.render.' + renderName + '.style') || '';
+      appBody = window.shapeEngine.renderShape('os.render.' + renderName + '.body') || '';
+      appScript = window.shapeEngine.renderShape('os.render.' + renderName + '.script') || '';
+    }
+
+    var win = document.createElement('div');
+    win.className = 'window focused';
+    win.dataset.app = name;
+    var content = '';
+    if (appStyle) content += '<style>' + appStyle + '</style>';
+    if (appBody) content += appBody;
+    if (appScript) content += '<script>' + appScript + '<\/script>';
+
+    win.innerHTML = '<div class="window-titlebar"><span class="window-title">' + name +
+      '</span><span class="window-controls"><button class="win-btn close">&times;</button></span></div>' +
+      '<div class="window-content">' + content + '</div>';
+    split.appendChild(win);
+    bindWindowEvents(win);
+    document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
+    win.classList.add('focused');
+    insertGutters();
   }
 
   document.addEventListener('keydown', function(e) {

@@ -310,38 +310,49 @@ shape os.wm.floating.script : os.wm.floating {
   });
 
   function launchApp(name) {
-    var wsNum = currentWs ? currentWs.dataset.ws : '1';
-    Promise.all([
-      fetch('/desktop/window', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({workspace: wsNum, app: name})
-      }).then(function(r) { return r.json(); }),
-      fetch('/desktop/appurl/' + name).then(function(r) { return r.json(); })
-    ]).then(function(results) {
-      var data = results[0];
-      var url = results[1].url;
-      var ws = currentWs;
-      var win = document.createElement('div');
-      win.className = 'window focused';
-      win.dataset.app = name;
-      win.dataset.id = data.id;
-      var offset = 30 + ws.querySelectorAll('.window').length * 30;
-      win.style.cssText = 'left:' + offset + 'px;top:' + offset + 'px;width:800px;height:600px;z-index:' + (++zIndex);
-      win.innerHTML = '<div class="window-titlebar"><span class="window-title">' + name +
-        '</span><span class="window-controls">' +
-        '<button class="win-btn minimize" title="minimize">&#8211;</button>' +
-        '<button class="win-btn maximize" title="maximize">&#9633;</button>' +
-        '<button class="win-btn close" title="close">&times;</button>' +
-        '</span></div>' +
-        '<div class="window-content"><iframe src="' + url + '" frameborder="0"></iframe></div>';
-      ws.appendChild(win);
-      addResizeHandles(win);
-      bindWindowEvents(win);
-      document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
-      win.classList.add('focused');
-      updateTaskbar();
-    });
+    var ws = currentWs;
+
+    // Resolve render prefix from app shape.
+    var renderName = name;
+    if (window.shapeEngine) {
+      var appShape = window.shapeEngine.engine.getShape('os.app.' + name);
+      if (appShape && appShape.character.dimensions.render) {
+        renderName = appShape.character.dimensions.render;
+      }
+    }
+
+    // Render app content structurally from shapes.
+    var appStyle = '', appBody = '', appScript = '';
+    if (window.shapeEngine) {
+      appStyle = window.shapeEngine.renderShape('os.render.' + renderName + '.style') || '';
+      appBody = window.shapeEngine.renderShape('os.render.' + renderName + '.body') || '';
+      appScript = window.shapeEngine.renderShape('os.render.' + renderName + '.script') || '';
+    }
+
+    var win = document.createElement('div');
+    win.className = 'window focused';
+    win.dataset.app = name;
+    var offset = 30 + ws.querySelectorAll('.window').length * 30;
+    win.style.cssText = 'left:' + offset + 'px;top:' + offset + 'px;width:800px;height:600px;z-index:' + (++zIndex);
+
+    var content = '';
+    if (appStyle) content += '<style>' + appStyle + '</style>';
+    if (appBody) content += appBody;
+    if (appScript) content += '<script>' + appScript + '<\/script>';
+
+    win.innerHTML = '<div class="window-titlebar"><span class="window-title">' + name +
+      '</span><span class="window-controls">' +
+      '<button class="win-btn minimize" title="minimize">&#8211;</button>' +
+      '<button class="win-btn maximize" title="maximize">&#9633;</button>' +
+      '<button class="win-btn close" title="close">&times;</button>' +
+      '</span></div>' +
+      '<div class="window-content">' + content + '</div>';
+    ws.appendChild(win);
+    addResizeHandles(win);
+    bindWindowEvents(win);
+    document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
+    win.classList.add('focused');
+    updateTaskbar();
   }
 
   // --- Window snapping ---
@@ -703,7 +714,7 @@ shape os.wm.floating.script : os.wm.floating {
   var helpPanel = document.createElement('div');
   helpPanel.id = 'help-panel';
   helpPanel.style.cssText = 'display:none;position:fixed;right:12px;top:48px;width:380px;max-height:70vh;background:var(--surface,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;z-index:100004;box-shadow:0 8px 32px rgba(0,0,0,0.6);overflow:hidden;display:none;flex-direction:column;';
-  helpPanel.innerHTML = '<div style="display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border,#444);flex-shrink:0;"><span style="flex:1;font-size:12px;font-weight:600;color:var(--fg-dim,#888);">Help</span><button id="help-close" style="background:none;border:none;color:var(--fg-dim,#888);cursor:pointer;font-size:16px;line-height:1;">&times;</button></div><iframe id="help-iframe" style="flex:1;border:none;width:100%;min-height:200px;" src="about:blank"></iframe>';
+  helpPanel.innerHTML = '<div style="display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border,#444);flex-shrink:0;"><span style="flex:1;font-size:12px;font-weight:600;color:var(--fg-dim,#888);">Help</span><button id="help-close" style="background:none;border:none;color:var(--fg-dim,#888);cursor:pointer;font-size:16px;line-height:1;">&times;</button></div><div id="help-content" style="flex:1;overflow-y:auto;padding:12px;font-size:12px;font-family:monospace;white-space:pre-wrap;color:var(--fg,#ccc);min-height:200px;"></div>';
   document.body.appendChild(helpPanel);
 
   document.getElementById('help-close').addEventListener('click', function() {
@@ -711,8 +722,14 @@ shape os.wm.floating.script : os.wm.floating {
   });
 
   function showHelp(shapeId) {
-    var iframe = document.getElementById('help-iframe');
-    iframe.src = '/docs/help/' + encodeURIComponent(shapeId);
+    var el = document.getElementById('help-content');
+    var text = '';
+    if (window.shapeEngine) {
+      text = window.shapeEngine.renderShape('os.doc.' + shapeId) || '';
+      if (!text) text = window.shapeEngine.execShell('man ' + shapeId) || '';
+      if (!text) text = window.shapeEngine.execShell('info ' + shapeId) || '';
+    }
+    el.textContent = text || 'No help available for ' + shapeId;
     helpPanel.style.display = 'flex';
   }
 
