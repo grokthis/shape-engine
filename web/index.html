@@ -161,7 +161,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     const tk = engine.tick;
 
     let html = '<style>' + themeCSS + wmCSS + termCSS + `
-    #workspace { height: calc(100vh - 28px); }
+    #desktop { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
+    #workspace { flex: 1; position: relative; }
     .app-content { width: 100%; height: 100%; overflow: auto; }
     .terminal-window { width: 100%; height: 100%; display: flex; flex-direction: column; }
     .terminal-window #output { flex: 1; overflow-y: auto; padding: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
