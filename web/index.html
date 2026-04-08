@@ -259,33 +259,49 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     resetIdle();
   }
 
-  function loadPage(path) {
-    console.log('loadPage: ' + path);
+  // renderPage renders a path through the shape engine and returns HTML.
+  // All iframe src= URLs in the output are pre-rendered to srcdoc so
+  // the browser never makes a request to the host.
+  function renderPage(path) {
     const result = handleRequest('GET', path, '');
-    console.log('loadPage result: status=' + result.status + ' body=' + result.body.length + ' chars');
-    if (result.body.length < 200) console.log('body: ' + result.body);
-    osFrame.srcdoc = result.body;
+    if (result.status !== 200) return result.body;
+
+    // Pre-render all iframe src="/..." to srcdoc.
+    // The shape engine renders the content. No network request.
+    let html = result.body;
+    html = html.replace(/<iframe([^>]*)\ssrc="(\/[^"]*)"([^>]*)>/g, (match, before, src, after) => {
+      const inner = handleRequest('GET', src, '');
+      if (inner.status === 200) {
+        // Escape the HTML for srcdoc attribute
+        const escaped = inner.body.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        return '<iframe' + before + ' srcdoc="' + escaped + '"' + after + '>';
+      }
+      return match;
+    });
+    return html;
+  }
+
+  function loadPage(path) {
+    osFrame.srcdoc = renderPage(path);
     osFrame.addEventListener('load', () => patchFrame(osFrame.contentWindow), { once: true });
   }
 
   function patchFrame(win) {
     if (!win) return;
 
-    // Render app iframes through the shape engine instead of real URLs.
-    // The desktop HTML has <iframe src="/terminal"> etc. which would 404
-    // on static hosting. Replace with srcdoc rendered by the engine.
+    // Patch nested iframes (app windows contain iframes too)
     win.document.querySelectorAll('iframe[src]').forEach(iframe => {
       const src = iframe.getAttribute('src');
       if (src && src.startsWith('/')) {
-        const result = handleRequest('GET', src, '');
-        if (result.status === 200) {
+        const inner = handleRequest('GET', src, '');
+        if (inner.status === 200) {
           iframe.removeAttribute('src');
-          iframe.srcdoc = result.body;
+          iframe.srcdoc = inner.body;
         }
       }
     });
 
-    // Intercept fetch
+    // Intercept fetch for dynamic requests (AJAX from app scripts)
     const originalFetch = win.fetch;
     win.fetch = async function(url, options = {}) {
       let urlStr = typeof url === 'string' ? url : url.toString();
