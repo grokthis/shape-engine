@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shape OS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+
+/* Loading screen */
+#loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
+#loading h1 { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
+#loading .status { font-size: 14px; color: #888; }
+#loading .bar { width: 200px; height: 2px; background: #222; border-radius: 1px; overflow: hidden; }
+#loading .bar-fill { height: 100%; background: #4af; width: 0%; transition: width 0.3s; }
+
+/* Username prompt */
+#prompt { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
+#prompt h2 { font-size: 20px; font-weight: 300; }
+#prompt input { background: #111; border: 1px solid #333; color: #e0e0e0; padding: 12px 20px; font-size: 16px; border-radius: 4px; outline: none; width: 280px; text-align: center; }
+#prompt input:focus { border-color: #4af; }
+#prompt .hint { font-size: 12px; color: #666; }
+
+/* OS frame */
+#os-frame { display: none; width: 100%; height: 100vh; border: none; }
+
+/* Idle warning */
+#idle-bar { display: none; position: fixed; top: 0; left: 0; right: 0; background: #1a1a2e; color: #888; font-size: 12px; padding: 4px 12px; text-align: center; z-index: 9999; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <h1>SHAPE OS</h1>
+  <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+  <div class="status" id="load-status">loading engine...</div>
+</div>
+
+<div id="prompt">
+  <h2>enter a username</h2>
+  <input id="username" type="text" placeholder="guest" autocomplete="off" autofocus>
+  <div class="hint">sandbox resets after 30 minutes of idle</div>
+</div>
+
+<iframe id="os-frame"></iframe>
+<div id="idle-bar"></div>
+
+<script src="wasm_exec.js"></script>
+<script>
+(async function() {
+  const barFill = document.getElementById('bar-fill');
+  const loadStatus = document.getElementById('load-status');
+  const loading = document.getElementById('loading');
+  const prompt = document.getElementById('prompt');
+  const usernameInput = document.getElementById('username');
+  const osFrame = document.getElementById('os-frame');
+  const idleBar = document.getElementById('idle-bar');
+
+  // Load WASM
+  barFill.style.width = '20%';
+  loadStatus.textContent = 'loading engine...';
+
+  const go = new Go();
+  let wasm;
+  try {
+    const resp = await fetch('shape.wasm');
+    barFill.style.width = '60%';
+    loadStatus.textContent = 'compiling...';
+    wasm = await WebAssembly.instantiateStreaming(resp, go.importObject);
+  } catch(e) {
+    loadStatus.textContent = 'error: ' + e.message;
+    return;
+  }
+
+  barFill.style.width = '80%';
+  loadStatus.textContent = 'booting shapes...';
+
+  // Run the Go WASM (boots the engine, sets window.shapeEngine)
+  go.run(wasm.instance);
+
+  // Wait for engine ready
+  await new Promise(resolve => {
+    const check = () => {
+      if (window.shapeEngine && window.shapeEngine.ready) resolve();
+      else setTimeout(check, 50);
+    };
+    check();
+  });
+
+  barFill.style.width = '100%';
+  loadStatus.textContent = window.shapeEngine.shapeCount() + ' shapes loaded';
+
+  // Show username prompt
+  setTimeout(() => {
+    loading.style.display = 'none';
+    prompt.style.display = 'flex';
+    usernameInput.focus();
+  }, 500);
+
+  // Enter to start
+  usernameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const username = usernameInput.value.trim() || 'guest';
+      startOS(username);
+    }
+  });
+
+  function startOS(username) {
+    prompt.style.display = 'none';
+    osFrame.style.display = 'block';
+
+    // Set username in engine
+    window.shapeEngine.execShell('set_dim os.session.user name ' + username);
+
+    // Monkey-patch fetch for the iframe: intercept local requests
+    // and route them through the WASM engine
+    osFrame.addEventListener('load', () => {
+      patchFrame(osFrame.contentWindow);
+    });
+
+    // Load desktop
+    loadPage('/desktop');
+
+    // Idle timeout: 30 minutes
+    let idleTimer;
+    let idleWarningTimer;
+    const IDLE_TIMEOUT = 30 * 60 * 1000;
+    const IDLE_WARNING = 25 * 60 * 1000;
+
+    function resetIdle() {
+      clearTimeout(idleTimer);
+      clearTimeout(idleWarningTimer);
+      idleBar.style.display = 'none';
+
+      idleWarningTimer = setTimeout(() => {
+        idleBar.style.display = 'block';
+        idleBar.textContent = 'Session expires in 5 minutes. Move your mouse or type to stay.';
+      }, IDLE_WARNING);
+
+      idleTimer = setTimeout(() => {
+        location.reload();
+      }, IDLE_TIMEOUT);
+    }
+
+    document.addEventListener('mousemove', resetIdle);
+    document.addEventListener('keydown', resetIdle);
+    document.addEventListener('click', resetIdle);
+    resetIdle();
+  }
+
+  function loadPage(path) {
+    const result = JSON.parse(window.shapeEngine.handleRequest('GET', path, ''));
+    const html = result.body;
+
+    osFrame.srcdoc = html;
+  }
+
+  function patchFrame(win) {
+    if (!win) return;
+
+    // Intercept fetch
+    const originalFetch = win.fetch;
+    win.fetch = async function(url, options = {}) {
+      let urlStr = typeof url === 'string' ? url : url.toString();
+
+      // Only intercept relative/same-origin requests
+      try {
+        const parsed = new URL(urlStr, win.location.href);
+        if (parsed.origin !== win.location.origin && parsed.protocol !== 'blob:') {
+          return originalFetch.call(win, url, options);
+        }
+        urlStr = parsed.pathname + parsed.search;
+      } catch(e) {
+        // relative URL
+      }
+
+      const method = (options.method || 'GET').toUpperCase();
+      let body = '';
+      if (options.body) {
+        body = typeof options.body === 'string' ? options.body : await options.body.text();
+      }
+
+      const result = JSON.parse(window.shapeEngine.handleRequest(method, urlStr, body));
+      return new Response(result.body, {
+        status: result.status,
+        headers: { 'Content-Type': result.contentType }
+      });
+    };
+
+    // Intercept link clicks for SPA navigation
+    win.document.addEventListener('click', (e) => {
+      const a = e.target.closest('a');
+      if (!a || !a.href) return;
+      try {
+        const url = new URL(a.href);
+        if (url.origin === win.location.origin) {
+          e.preventDefault();
+          loadPage(url.pathname + url.search);
+        }
+      } catch(err) {}
+    });
+
+    // Intercept form submissions
+    win.document.addEventListener('submit', (e) => {
+      const form = e.target;
+      if (form.method && form.method.toUpperCase() === 'POST') {
+        e.preventDefault();
+        const formData = new FormData(form);
+        const body = new URLSearchParams(formData).toString();
+        const result = JSON.parse(window.shapeEngine.handleRequest('POST', form.action || '/', body));
+        osFrame.srcdoc = result.body;
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>
