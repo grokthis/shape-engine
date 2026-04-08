@@ -46,7 +46,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <iframe id="os-frame"></iframe>
 <div id="idle-bar"></div>
 
-<script src="wasm_exec.js"></script>
+<script src="shape-engine.js"></script>
 <script>
 (async function() {
   const barFill = document.getElementById('bar-fill');
@@ -57,46 +57,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   const osFrame = document.getElementById('os-frame');
   const idleBar = document.getElementById('idle-bar');
 
-  // Load WASM
-  barFill.style.width = '20%';
-  loadStatus.textContent = 'loading engine...';
+  let engine;
 
-  const go = new Go();
-  let wasm;
+  // Boot
+  barFill.style.width = '30%';
+  loadStatus.textContent = 'loading shapes...';
+
   try {
-    const resp = await fetch('shape.wasm');
-    barFill.style.width = '60%';
-    loadStatus.textContent = 'compiling...';
-    wasm = await WebAssembly.instantiateStreaming(resp, go.importObject);
+    engine = await bootShapeOS();
   } catch(e) {
     loadStatus.textContent = 'error: ' + e.message;
+    console.error(e);
     return;
   }
 
-  barFill.style.width = '80%';
-  loadStatus.textContent = 'booting shapes...';
-
-  // Run the Go WASM (boots the engine, sets window.shapeEngine)
-  go.run(wasm.instance);
-
-  // Wait for engine ready
-  await new Promise(resolve => {
-    const check = () => {
-      if (window.shapeEngine && window.shapeEngine.ready) resolve();
-      else setTimeout(check, 50);
-    };
-    check();
-  });
-
   barFill.style.width = '100%';
-  loadStatus.textContent = window.shapeEngine.shapeCount() + ' shapes loaded';
+  loadStatus.textContent = engine.shapeCount() + ' shapes loaded';
 
   // Show username prompt
   setTimeout(() => {
     loading.style.display = 'none';
     prompt.style.display = 'flex';
     usernameInput.focus();
-  }, 500);
+  }, 400);
 
   // Enter to start
   usernameInput.addEventListener('keydown', (e) => {
@@ -106,25 +89,147 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     }
   });
 
+  function handleRequest(method, path, body) {
+    // Parse query string from path
+    let queryStr = '';
+    const qi = path.indexOf('?');
+    if (qi >= 0) { queryStr = path.slice(qi + 1); path = path.slice(0, qi); }
+
+    // Find matching route shape
+    let bestRoute = null, bestLen = 0;
+    for (const s of engine.allShapes()) {
+      if (s.character.dimensions.type !== 'route') continue;
+      const rm = s.character.dimensions.method;
+      if (rm && rm.toUpperCase() !== method.toUpperCase()) continue;
+      const rp = s.character.dimensions.path;
+      if (rp === path) { bestRoute = s; break; }
+      if (matchPattern(rp, path)) {
+        const pl = rp.split('/').length;
+        if (pl > bestLen) { bestRoute = s; bestLen = pl; }
+      }
+    }
+
+    if (!bestRoute) return { status: 404, contentType: 'text/plain', body: 'not found' };
+
+    const handlerId = bestRoute.character.dimensions.handler;
+    if (!handlerId) return { status: 500, contentType: 'text/plain', body: 'route has no handler' };
+
+    const handler = engine.getShape(handlerId);
+    if (!handler) return { status: 500, contentType: 'text/plain', body: 'handler not found: ' + handlerId };
+
+    // Build scope
+    const scope = { ...bestRoute.character.dimensions, method, path, query: queryStr, body };
+    for (const param of queryStr.split('&')) {
+      if (!param) continue;
+      const [k, v] = param.split('=');
+      scope['q_' + k] = v || '';
+    }
+    extractPathParams(bestRoute.character.dimensions.path, path, scope);
+
+    try {
+      const prog = parse(handler.character.content);
+      const ev = createEvaluator(engine);
+      for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
+      ev.run(prog);
+      const ct = bestRoute.character.dimensions.content_type || 'text/html; charset=utf-8';
+      return { status: 200, contentType: ct, body: ev.getOutput() };
+    } catch(e) {
+      return { status: 500, contentType: 'text/plain', body: 'eval error: ' + e.message };
+    }
+  }
+
+  function execShell(line) {
+    line = line.trim();
+    if (!line) return '';
+
+    // Pipe support
+    if (line.includes(' | ')) {
+      const segments = line.split(' | ');
+      let output = '';
+      for (let seg of segments) {
+        seg = seg.trim();
+        if (output) seg = seg + ' ' + output;
+        output = execShell(seg);
+      }
+      return output;
+    }
+
+    const parts = line.split(/\s+/);
+    const cmd = parts[0];
+    const argList = parts.slice(1);
+
+    const prefixShape = engine.getShape('os.session.shell.prefix');
+    const prefix = prefixShape ? prefixShape.character.content : '';
+    const homeShape = engine.getShape('os.config.shell.home');
+    const home = homeShape ? homeShape.character.content : '';
+
+    const cmdShape = engine.getShape('os.shell.cmd.' + cmd);
+    if (cmdShape && cmdShape.character.dimensions.type === 'exec') {
+      const scope = { args: argList.join(' '), line, cmd, prefix, home };
+      argList.forEach((a, i) => scope['arg' + i] = a);
+      try {
+        const prog = parse(cmdShape.character.content);
+        const ev = createEvaluator(engine);
+        for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
+        ev.run(prog);
+        return ev.getOutput();
+      } catch(e) {
+        return 'error: ' + e.message + '\n';
+      }
+    }
+
+    // Try as raw shape-lang
+    try {
+      const prog = parse(line);
+      const ev = createEvaluator(engine);
+      ev.run(prog);
+      return ev.getOutput();
+    } catch(e) {
+      return 'error: ' + e.message + '\n';
+    }
+  }
+
+  function matchPattern(pattern, path) {
+    if (!pattern) return false;
+    const pp = pattern.split('/'), tp = path.split('/');
+    for (let i = 0; i < pp.length; i++) {
+      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) return i < tp.length;
+      if (i >= tp.length) return false;
+      if (!pp[i].startsWith('{') && pp[i] !== tp[i]) return false;
+    }
+    return pp.length === tp.length;
+  }
+
+  function extractPathParams(pattern, path, scope) {
+    if (!pattern) return;
+    const pp = pattern.split('/'), tp = path.split('/');
+    for (let i = 0; i < pp.length && i < tp.length; i++) {
+      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) {
+        scope['path_' + pp[i].slice(1, -4)] = tp.slice(i).join('/');
+        return;
+      }
+      if (pp[i].startsWith('{') && pp[i].endsWith('}')) {
+        scope['path_' + pp[i].slice(1, -1)] = tp[i];
+      }
+    }
+  }
+
   function startOS(username) {
     prompt.style.display = 'none';
     osFrame.style.display = 'block';
 
-    // Set username in engine
-    window.shapeEngine.execShell('set_dim os.session.user name ' + username);
+    // Set username
+    const sessionShape = engine.getShape('os.session');
+    if (sessionShape) sessionShape.character.dimensions.user = username;
 
-    // Monkey-patch fetch for the iframe: intercept local requests
-    // and route them through the WASM engine
-    osFrame.addEventListener('load', () => {
-      patchFrame(osFrame.contentWindow);
-    });
+    // Expose to window for debugging
+    window.shapeEngine = { engine, handleRequest, execShell, shapeCount: () => engine.shapeCount() };
 
     // Load desktop
     loadPage('/desktop');
 
     // Idle timeout: 30 minutes
-    let idleTimer;
-    let idleWarningTimer;
+    let idleTimer, idleWarningTimer;
     const IDLE_TIMEOUT = 30 * 60 * 1000;
     const IDLE_WARNING = 25 * 60 * 1000;
 
@@ -132,15 +237,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       clearTimeout(idleTimer);
       clearTimeout(idleWarningTimer);
       idleBar.style.display = 'none';
-
       idleWarningTimer = setTimeout(() => {
         idleBar.style.display = 'block';
         idleBar.textContent = 'Session expires in 5 minutes. Move your mouse or type to stay.';
       }, IDLE_WARNING);
-
-      idleTimer = setTimeout(() => {
-        location.reload();
-      }, IDLE_TIMEOUT);
+      idleTimer = setTimeout(() => location.reload(), IDLE_TIMEOUT);
     }
 
     document.addEventListener('mousemove', resetIdle);
@@ -150,10 +251,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   }
 
   function loadPage(path) {
-    const result = JSON.parse(window.shapeEngine.handleRequest('GET', path, ''));
-    const html = result.body;
-
-    osFrame.srcdoc = html;
+    const result = handleRequest('GET', path, '');
+    osFrame.srcdoc = result.body;
+    osFrame.addEventListener('load', () => patchFrame(osFrame.contentWindow), { once: true });
   }
 
   function patchFrame(win) {
@@ -163,42 +263,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     const originalFetch = win.fetch;
     win.fetch = async function(url, options = {}) {
       let urlStr = typeof url === 'string' ? url : url.toString();
-
-      // Only intercept relative/same-origin requests
       try {
         const parsed = new URL(urlStr, win.location.href);
-        if (parsed.origin !== win.location.origin && parsed.protocol !== 'blob:') {
-          return originalFetch.call(win, url, options);
-        }
+        if (parsed.origin !== win.location.origin && parsed.protocol !== 'blob:') return originalFetch.call(win, url, options);
         urlStr = parsed.pathname + parsed.search;
-      } catch(e) {
-        // relative URL
-      }
-
+      } catch(e) {}
       const method = (options.method || 'GET').toUpperCase();
       let body = '';
-      if (options.body) {
-        body = typeof options.body === 'string' ? options.body : await options.body.text();
-      }
-
-      const result = JSON.parse(window.shapeEngine.handleRequest(method, urlStr, body));
-      return new Response(result.body, {
-        status: result.status,
-        headers: { 'Content-Type': result.contentType }
-      });
+      if (options.body) body = typeof options.body === 'string' ? options.body : await options.body.text();
+      const result = handleRequest(method, urlStr, body);
+      return new Response(result.body, { status: result.status, headers: { 'Content-Type': result.contentType } });
     };
 
-    // Intercept link clicks for SPA navigation
+    // Intercept link clicks
     win.document.addEventListener('click', (e) => {
       const a = e.target.closest('a');
       if (!a || !a.href) return;
-      try {
-        const url = new URL(a.href);
-        if (url.origin === win.location.origin) {
-          e.preventDefault();
-          loadPage(url.pathname + url.search);
-        }
-      } catch(err) {}
+      try { const url = new URL(a.href); if (url.origin === win.location.origin) { e.preventDefault(); loadPage(url.pathname + url.search); } } catch(err) {}
     });
 
     // Intercept form submissions
@@ -206,9 +287,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       const form = e.target;
       if (form.method && form.method.toUpperCase() === 'POST') {
         e.preventDefault();
-        const formData = new FormData(form);
-        const body = new URLSearchParams(formData).toString();
-        const result = JSON.parse(window.shapeEngine.handleRequest('POST', form.action || '/', body));
+        const body = new URLSearchParams(new FormData(form)).toString();
+        const result = handleRequest('POST', form.action || '/', body);
         osFrame.srcdoc = result.body;
       }
     });
