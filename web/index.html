@@ -259,45 +259,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     resetIdle();
   }
 
-  // renderPage renders a path through the shape engine and returns HTML.
-  // All iframe src= URLs in the output are pre-rendered to srcdoc so
-  // the browser never makes a request to the host.
-  function renderPage(path) {
-    const result = handleRequest('GET', path, '');
-    if (result.status !== 200) return result.body;
-
-    // Pre-render all iframe src="/..." to srcdoc.
-    // The shape engine renders the content. No network request.
-    let html = result.body;
-    html = html.replace(/<iframe([^>]*)\ssrc="(\/[^"]*)"([^>]*)>/g, (match, before, src, after) => {
-      const inner = handleRequest('GET', src, '');
-      if (inner.status === 200) {
-        // Escape the HTML for srcdoc attribute
-        const escaped = inner.body.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-        return '<iframe' + before + ' srcdoc="' + escaped + '"' + after + '>';
-      }
-      return match;
-    });
-    return html;
-  }
-
   function loadPage(path) {
-    osFrame.srcdoc = renderPage(path);
+    const result = handleRequest('GET', path, '');
+    if (result.status !== 200) { osFrame.srcdoc = result.body; return; }
+
+    // Replace iframe src="/..." with data-route="/..." so the browser
+    // never fetches from the host. Content is rendered after DOM load.
+    const html = result.body.replace(/(<iframe[^>]*)\ssrc="(\/[^"]*)"/g, '$1 data-route="$2"');
+    osFrame.srcdoc = html;
     osFrame.addEventListener('load', () => patchFrame(osFrame.contentWindow), { once: true });
   }
 
   function patchFrame(win) {
     if (!win) return;
 
-    // Patch nested iframes (app windows contain iframes too)
-    win.document.querySelectorAll('iframe[src]').forEach(iframe => {
-      const src = iframe.getAttribute('src');
-      if (src && src.startsWith('/')) {
-        const inner = handleRequest('GET', src, '');
-        if (inner.status === 200) {
-          iframe.removeAttribute('src');
-          iframe.srcdoc = inner.body;
-        }
+    // Render all data-route iframes through the shape engine.
+    // Content is set via the DOM srcdoc property (no escaping needed).
+    win.document.querySelectorAll('iframe[data-route]').forEach(iframe => {
+      const route = iframe.getAttribute('data-route');
+      const result = handleRequest('GET', route, '');
+      if (result.status === 200) {
+        iframe.srcdoc = result.body;
       }
     });
 
