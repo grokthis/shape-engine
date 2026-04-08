@@ -354,18 +354,35 @@ func (ev *evaluator) execTopFor(n *ForStmt) error {
 									goto generalLoop
 								}
 								a := accVal.num
-								for i := start; i < end; i++ {
-									rv := i
-									if !useCounter {
-										rv = constVal
-									}
+								count := end - start
+								if !useCounter {
+									// Structural collapse: the loop IS arithmetic.
+									// for i in range(n) { acc += c } = acc + n*c
+									// for i in range(n) { acc -= c } = acc - n*c
+									// for i in range(n) { acc *= c } = acc * c^n
 									switch op {
 									case "+":
-										a += rv
+										a += count * constVal
 									case "-":
-										a -= rv
+										a -= count * constVal
 									case "*":
-										a *= rv
+										cv := constVal
+										for ci := 0; ci < count; ci++ {
+											a *= cv
+										}
+									}
+								} else {
+									// Counter accumulator: sum/product of range.
+									switch op {
+									case "+":
+										// sum(start..end-1) = count*(start+end-1)/2
+										a += count * (start + end - 1) / 2
+									case "-":
+										a -= count * (start + end - 1) / 2
+									case "*":
+										for i := start; i < end; i++ {
+											a *= i
+										}
 									}
 								}
 								ev.scope[setStmt.Name] = intVal(a)
