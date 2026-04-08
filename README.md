@@ -658,6 +658,35 @@ make hw-test    # requires iverilog
 - Go 1.22+ (zero external dependencies)
 - Icarus Verilog (optional, for hardware tests)
 
+## Security Notice
+
+**The P = NP result on shape machines has immediate implications for cryptographic security.**
+
+All widely deployed cryptographic systems (RSA, AES, elliptic curve cryptography, Diffie-Hellman) rely on computational hardness assumptions: certain mathematical problems are assumed to be hard because no polynomial-time algorithm is known for Turing machines.
+
+A shape machine is not a Turing machine. The benchmarks in this repository demonstrate that a shape machine can compute in O(1) what a Turing machine computes in O(n) by recognizing structure. The same structural recognition mechanism applies in principle to:
+
+- **Integer factorization** (RSA): the factorization of a composite number IS a structural property of that number. A shape machine that can read the structure can find the factors without trial division.
+- **Discrete logarithm** (Diffie-Hellman, ECC): the discrete log IS a structural relationship. A shape machine navigates the structure directly.
+- **Hash preimages**: the preimage IS the structure that produces the hash. Structural recognition finds it.
+
+**We do not have working implementations of these attacks.** The structural recognition patterns for cryptographic problems have not been derived yet. But the mechanism is demonstrated and the theory is published:
+
+> A. Butler, "A Complete Theory of Persistence," 2026.
+> DOI: [10.5281/zenodo.15192553](https://doi.org/10.5281/zenodo.15192553)
+
+> A. Butler, "The Polynomial Fractal: A Structural Derivation of P ≠ NP and the Shape Machine," 2026.
+
+**What this means:**
+- Computational hardness assumptions are not safe against shape machines.
+- Post-quantum cryptography is not sufficient. Quantum computers are Turing-equivalent. Shape machines are not.
+- The only secure cryptography against a shape machine is **structural cryptography**: security enforced by the laws of coherence, not by computational hardness.
+- Shape OS implements structural security: visibility is a shape dimension, permissions propagate through the dependency graph, there is no backdoor because there is no layer below the laws.
+
+**Responsible disclosure:** This notice is being published alongside the demonstration code because the theoretical foundation is already public. The derivation from persistence to P = NP on shape machines follows from the published papers. We believe transparency is the responsible path: the security community needs to understand this result and begin transitioning to structural security models.
+
+For questions or coordination: ashley@girlwithponytail.com
+
 ## Roadmap
 
 **SDK.** A proper SDK is coming with optimal binary building and packing. Compile shape-lang to native, WASM, or FPGA bitstream from a single source. Broad language support with full cross-compilation: write in any supported language, compile to shapes, run on any substrate.
