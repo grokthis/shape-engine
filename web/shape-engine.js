@@ -369,9 +369,12 @@ function createEvaluator(engine) {
   function setScope(k, v) { scope[k] = v; }
   function getOutput() { return out; }
 
-  function run(prog) {
+  function run(prog, bootOnly) {
     out = '';
-    for (const s of prog.stmts) execStmt(s);
+    for (const s of prog.stmts) {
+      if (bootOnly && s.type !== 'shape') continue;
+      execStmt(s);
+    }
     return out;
   }
 
@@ -677,7 +680,7 @@ async function bootShapeOS() {
     try {
       const prog = parse(f.content);
       const ev = createEvaluator(engine);
-      ev.run(prog);
+      ev.run(prog, true); // Boot-only: shape declarations only, no exec
     } catch (e) {
       // Skip files with parse errors (e.g. route files with / in values)
     }
