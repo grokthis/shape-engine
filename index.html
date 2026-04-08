@@ -20,7 +20,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 #prompt-screen input:focus { border-color: #4af; }
 #prompt-screen .hint { font-size: 12px; color: #666; }
 
-#desktop { display: none; width: 100%; height: 100vh; overflow: hidden; }
+#desktop { display: none; width: 100%; height: 100vh; overflow: hidden; position: relative; }
 </style>
 </head>
 <body>
@@ -161,6 +161,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     const tk = engine.tick;
 
     let html = '<style>' + themeCSS + wmCSS + termCSS + `
+    #workspace { height: calc(100vh - 28px); }
     .app-content { width: 100%; height: 100%; overflow: auto; }
     .terminal-window { width: 100%; height: 100%; display: flex; flex-direction: column; }
     .terminal-window #output { flex: 1; overflow-y: auto; padding: 8px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
