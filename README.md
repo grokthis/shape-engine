@@ -4,7 +4,9 @@ An operating system built on one axiom: *persistence is the capacity to change w
 
 Everything in Shape OS is a shape. The laws of coherence, the shell, the window manager, the office suite, the apps, the tests, the configuration, the documentation, the hardware gates. Shapes all the way down to silicon.
 
-**[Try it in your browser](https://grokthis.github.io/shape-engine/)** -- no install, no signup. Your sandbox resets after 30 minutes of idle.
+The desktop, the window manager, the theme, the terminal, every app: all CPU-rendered by shape evaluation. No GPU. No browser rendering engine for layout. The Go binary evaluates the shape graph and outputs the page. The JS shim does the same in the browser. The performance numbers in this README are the speed of the engine that renders the OS.
+
+**[Web demo](https://grokthis.github.io/shape-engine/)** (work in progress, a few rendering bugs being fixed). Clone the repo and run `make build && ./bin/shape` for the full native experience.
 
 ## What it looks like
 
