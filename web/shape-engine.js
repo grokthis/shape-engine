@@ -740,7 +740,38 @@ async function bootShapeOS() {
   }
 
   console.log(`Shape OS: ${engine.shapeCount()} shapes loaded from ${loaded} files`);
+
+  // Bootstrap runtime shapes: workspaces and default windows.
+  // These are dynamic shapes created from config, not static .sl files.
+  const wsCount = parseInt(getContent(engine, 'os.config.desktop.workspaces') || '3');
+  for (let i = 1; i <= wsCount; i++) {
+    const ws = new Shape('os.desktop.workspace.' + i);
+    ws.character.dimensions = { type: 'workspace', layout: 'hsplit' };
+    ws.structure.emergence.layer = 5;
+    engine.addShape(ws);
+  }
+
+  // Create default app windows in workspace 1
+  const defaultApps = (getContent(engine, 'os.config.desktop.default.apps') || 'shell').split(',');
+  const ws1 = engine.getShape('os.desktop.workspace.1');
+  for (let i = 0; i < defaultApps.length; i++) {
+    const appName = defaultApps[i].trim();
+    const winId = 'os.desktop.window.' + appName;
+    const win = new Shape(winId);
+    win.character.dimensions = { type: 'window', app: appName, focused: i === 0 ? 'true' : 'false' };
+    win.structure.emergence.layer = 5;
+    engine.addShape(win);
+    // Workspace deps on its windows (handler uses deps(ws_id) to find them)
+    if (ws1) ws1.structure.transformation.deps.push(winId);
+  }
+
+  console.log(`Shape OS: bootstrapped ${wsCount} workspaces, ${defaultApps.length} windows`);
   return engine;
+}
+
+function getContent(engine, id) {
+  const s = engine.getShape(id);
+  return s ? s.character.content : '';
 }
 
 // Export for use by index.html

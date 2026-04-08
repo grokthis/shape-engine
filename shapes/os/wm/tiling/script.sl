@@ -26,19 +26,33 @@ shape os.wm.tiling.script : os.wm.tiling {
     });
   });
 
+  function focusWindow(win) {
+    document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
+    win.classList.add('focused');
+    var id = win.dataset.id;
+    if (id) {
+      fetch('/desktop/focus', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+      });
+    }
+  }
+
   function bindWindowEvents(win) {
-    win.addEventListener('mousedown', function() {
-      document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
-      this.classList.add('focused');
-      var id = this.dataset.id;
-      if (id) {
-        fetch('/desktop/focus', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({id: id})
-        });
-      }
-    });
+    // Click anywhere on the window (titlebar, borders, content area)
+    win.addEventListener('mousedown', function() { focusWindow(win); });
+    // Detect when the iframe inside gets focus (click inside app content)
+    var iframe = win.querySelector('iframe');
+    if (iframe) {
+      iframe.addEventListener('focus', function() { focusWindow(win); });
+      // Polling fallback: iframes don't always fire focus events reliably
+      iframe.addEventListener('load', function() {
+        try {
+          iframe.contentWindow.addEventListener('mousedown', function() { focusWindow(win); });
+        } catch(e) { /* cross-origin, fall back to focus event */ }
+      });
+    }
     var closeBtn = win.querySelector('.win-btn.close');
     if (closeBtn) {
       closeBtn.addEventListener('click', function(e) {
