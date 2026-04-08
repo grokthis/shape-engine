@@ -66,7 +66,7 @@ type value struct {
 }
 
 func strVal(s string) value     { return value{kind: "string", str: s} }
-func intVal(n int) value        { return value{kind: "int", num: n, n: arith.FromInt(n)} }
+func intVal(n int) value        { return value{kind: "int", num: n} } // n field created lazily
 func floatVal(f float64) value  { return value{kind: "float", flt: f, n: arith.FromFloat(f)} }
 func boolVal(b bool) value      { return value{kind: "bool", boolean: b} }
 func nilVal() value             { return value{kind: "nil"} }
@@ -352,6 +352,9 @@ func (ev *evaluator) execTopFor(n *ForStmt) error {
 
 // execTopWhile handles while at top level.
 func (ev *evaluator) execTopWhile(n *WhileStmt) error {
+	// Structural shortcut: while COND where COND is a comparison
+	// involving a scope variable. Evaluate the condition using
+	// the fast int path when possible.
 	for {
 		cond, err := ev.evalExpr(n.Cond)
 		if err != nil {
@@ -492,6 +495,22 @@ func (ev *evaluator) execSet(s *SetStmt) error {
 						return nil
 					}
 				}
+			}
+		}
+	}
+
+	// Structural shortcut: set NAME = append(NAME, item).
+	// Grow the list in place. No copy.
+	if call, ok := s.Expr.(*CallExpr); ok && call.Fn == "append" && len(call.Args) == 2 {
+		if ident, ok := call.Args[0].(*Ident); ok && ident.Name == s.Name {
+			if existing, ok := ev.scope[s.Name]; ok && existing.kind == "list" {
+				item, err := ev.evalExpr(call.Args[1])
+				if err != nil {
+					return err
+				}
+				existing.list = append(existing.list, item)
+				ev.scope[s.Name] = existing
+				return nil
 			}
 		}
 	}
