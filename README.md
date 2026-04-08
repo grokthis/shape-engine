@@ -141,6 +141,8 @@ Same source code. Same result. **30x faster.** The shape engine sees structure t
 | **ARM64 assembly** | **0.9 ns** | 322 ns | **358x** | sub + mul + add |
 | **Go** | **10.7 ns** | 321 ns | **30x** | Static fusion |
 | **JavaScript (V8)** | **16.2 ns** | 365 ns | **22.5x** | Integer type tags, V8 JIT |
+| **Java (HotSpot)** | **1.1 ns** | 319 ns | **290x** | JIT'd formula |
+| **Java (full eval)** | **7.2 ns** | 319 ns | **44x** | Flat int[] AST |
 | **Ruby** | **69 ns** | 22,724 ns | **329x** | Direct formula |
 | **Ruby (full eval)** | **497 ns** | 22,724 ns | **45.7x** | AST pattern match |
 
@@ -228,6 +230,7 @@ The structural shortcut works identically everywhere:
 | ARM64 assembly | 322 ns | 0.9 ns | 358x |
 | Go | 321 ns | 10.7 ns | 30x |
 | JavaScript (V8) | 365 ns | 16.2 ns | 22.5x |
+| Java (HotSpot) | 319 ns | 1.1 ns | 290x |
 | Ruby (CRuby) | 22,724 ns | 69 ns | 329x |
 | FPGA (est.) | ~1000 ns | ~1 ns | 1000x |
 
