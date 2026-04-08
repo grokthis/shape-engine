@@ -19,6 +19,7 @@ package lang
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ashbuilds/shape-engine/pkg/arith"
 	"github.com/ashbuilds/shape-engine/pkg/engine"
@@ -36,19 +37,37 @@ func Eval(prog *Program, eng *engine.Engine, ns string) (string, error) {
 	return EvalWithScope(prog, eng, ns, nil)
 }
 
+// evalPool reuses evaluator objects to avoid allocation.
+var evalPool = &sync.Pool{
+	New: func() interface{} {
+		return &evaluator{
+			scope: make(map[string]value, 16),
+			fns:   make(map[string]*FnDecl, 4),
+		}
+	},
+}
+
 // EvalWithScope executes a program with initial variable bindings.
 // Used by the shell to pass args and context to command shapes.
 func EvalWithScope(prog *Program, eng *engine.Engine, ns string, scope map[string]string) (string, error) {
-	ev := &evaluator{
-		eng:   eng,
-		ns:    ns,
-		scope: make(map[string]value),
-		fns:   make(map[string]*FnDecl),
+	ev := evalPool.Get().(*evaluator)
+	ev.eng = eng
+	ev.ns = ns
+	ev.edits = 0
+	ev.out.Reset()
+	// Clear scope (reuse the map).
+	for k := range ev.scope {
+		delete(ev.scope, k)
+	}
+	for k := range ev.fns {
+		delete(ev.fns, k)
 	}
 	for k, v := range scope {
 		ev.scope[k] = strVal(v)
 	}
-	return ev.run(prog)
+	result, err := ev.run(prog)
+	evalPool.Put(ev)
+	return result, err
 }
 
 // value is a runtime value during evaluation.
