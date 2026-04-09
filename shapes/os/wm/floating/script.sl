@@ -261,19 +261,91 @@ shape os.wm.floating.script : os.wm.floating {
   });
 
   // --- Taskbar ---
+  // Show icons or names based on launcher config.
+  var taskbarMode = 'icons'; // default: icons
+  if (window.shapeEngine) {
+    var modeCfg = window.shapeEngine.engine.getShape('os.config.launcher');
+    if (modeCfg && modeCfg.character.dimensions.taskbar_mode) {
+      taskbarMode = modeCfg.character.dimensions.taskbar_mode;
+    }
+  }
+
+  function getAppIcon(appName) {
+    if (!window.shapeEngine) return appName.substring(0, 2);
+    var appShape = window.shapeEngine.engine.getShape('os.app.' + appName);
+    if (appShape && appShape.character.dimensions.icon) return appShape.character.dimensions.icon;
+    if (appShape && appShape.character.dimensions.name) return appShape.character.dimensions.name.substring(0, 2);
+    return appName.substring(0, 2);
+  }
+
+  function getAppName(appName) {
+    if (!window.shapeEngine) return appName;
+    var appShape = window.shapeEngine.engine.getShape('os.app.' + appName);
+    if (appShape && appShape.character.dimensions.name) return appShape.character.dimensions.name;
+    return appName;
+  }
+
   function updateTaskbar() {
     if (!taskbarItems) return;
     taskbarItems.innerHTML = '';
+
+    // Pinned apps (always shown)
+    if (window.shapeEngine) {
+      var pinsCfg = window.shapeEngine.engine.getShape('os.config.launcher.pins');
+      if (pinsCfg && pinsCfg.character.content) {
+        pinsCfg.character.content.split(',').forEach(function(pin) {
+          pin = pin.trim();
+          if (!pin) return;
+          var item = document.createElement('div');
+          item.className = 'taskbar-item pinned';
+          // Check if this app has an open window
+          var openWin = currentWs ? currentWs.querySelector('.window[data-app="' + pin + '"]') : null;
+          if (openWin && openWin.classList.contains('focused')) item.className += ' active';
+          if (taskbarMode === 'icons') {
+            item.innerHTML = '<span class="taskbar-icon">' + getAppIcon(pin) + '</span>';
+            item.title = getAppName(pin);
+          } else {
+            item.textContent = getAppName(pin);
+          }
+          item.addEventListener('click', function() {
+            if (openWin) {
+              if (openWin.classList.contains('minimized')) openWin.classList.remove('minimized');
+              focusWindow(openWin);
+            } else {
+              launchApp(pin);
+            }
+          });
+          taskbarItems.appendChild(item);
+        });
+      }
+    }
+
+    // Separator
+    var sep = document.createElement('div');
+    sep.className = 'taskbar-sep';
+    taskbarItems.appendChild(sep);
+
+    // Open windows not in pins
     var wins = currentWs ? currentWs.querySelectorAll('.window') : [];
+    var pinList = '';
+    if (window.shapeEngine) {
+      var pc = window.shapeEngine.engine.getShape('os.config.launcher.pins');
+      if (pc) pinList = ',' + pc.character.content + ',';
+    }
     wins.forEach(function(win) {
+      var appName = win.dataset.app || 'window';
+      if (pinList.indexOf(',' + appName + ',') >= 0) return; // skip pinned
       var item = document.createElement('div');
       item.className = 'taskbar-item';
       if (win.classList.contains('focused') && !win.classList.contains('minimized')) item.className += ' active';
-      item.textContent = win.dataset.app || 'window';
+      if (taskbarMode === 'icons') {
+        item.innerHTML = '<span class="taskbar-icon">' + getAppIcon(appName) + '</span>';
+        item.title = getAppName(appName);
+      } else {
+        item.textContent = getAppName(appName);
+      }
       item.addEventListener('click', function() {
-        if (win.classList.contains('minimized')) {
-          win.classList.remove('minimized');
-        }
+        if (win.classList.contains('minimized')) win.classList.remove('minimized');
         focusWindow(win);
       });
       taskbarItems.appendChild(item);
@@ -327,6 +399,17 @@ shape os.wm.floating.script : os.wm.floating {
 
   function launchApp(name) {
     var ws = currentWs;
+
+    // Track recents
+    if (window.shapeEngine) {
+      var recShape = window.shapeEngine.engine.getShape('os.config.launcher.recents');
+      if (recShape) {
+        var recents = recShape.character.content.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s && s !== name; });
+        recents.unshift(name);
+        if (recents.length > 8) recents = recents.slice(0, 8);
+        window.shapeEngine.engine.edit('os.config.launcher.recents', recents.join(','));
+      }
+    }
 
     // Resolve render prefix from app shape.
     var renderName = name;

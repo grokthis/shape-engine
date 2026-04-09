@@ -1,6 +1,8 @@
 shape os.app.editor : os {
   type: app
-  name: vip
+  name: Editor
+  icon: vi
+  category: tools
   layer: 5
   "Vi perfected. Modal text editor for shapes."
 }

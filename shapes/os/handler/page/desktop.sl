@@ -156,18 +156,75 @@ print("<div id=\"launcher\" style=\"display:none\"><div class=\"launcher-backdro
 print("<input type=\"text\" id=\"launcher-input\" placeholder=\"Search apps...\" autofocus>")
 print("<div class=\"launcher-results\">")
 
+// Pinned apps (always shown at top)
+let pins_str = content("os.config.launcher.pins")
+if pins_str != "" {
+  print("<div class=\"launcher-section\"><div class=\"launcher-section-title\">Pinned</div><div class=\"launcher-grid\">")
+  let pins = split(pins_str, ",")
+  for pin in pins {
+    let app_id = "os.app." + trim(pin)
+    if exists(app_id) {
+      let pname = dim(app_id, "name")
+      let picon = dim(app_id, "icon")
+      if picon == "" { set picon = substring(pname, 0, 2) }
+      print("<div class=\"launcher-item pinned\" data-app=\"" + trim(pin) + "\"><span class=\"launcher-icon\">" + picon + "</span><span class=\"launcher-name\">" + pname + "</span></div>")
+    }
+  }
+  print("</div></div>")
+}
+
+// Favorites
+let favs_str = content("os.config.launcher.favorites")
+if favs_str != "" {
+  print("<div class=\"launcher-section\"><div class=\"launcher-section-title\">Favorites</div><div class=\"launcher-grid\">")
+  let favs = split(favs_str, ",")
+  for fav in favs {
+    let app_id = "os.app." + trim(fav)
+    if exists(app_id) {
+      let fname = dim(app_id, "name")
+      let ficon = dim(app_id, "icon")
+      if ficon == "" { set ficon = substring(fname, 0, 2) }
+      print("<div class=\"launcher-item\" data-app=\"" + trim(fav) + "\"><span class=\"launcher-icon\">" + ficon + "</span><span class=\"launcher-name\">" + fname + "</span></div>")
+    }
+  }
+  print("</div></div>")
+}
+
+// Recents
+let recents_str = content("os.config.launcher.recents")
+if recents_str != "" {
+  print("<div class=\"launcher-section\"><div class=\"launcher-section-title\">Recent</div><div class=\"launcher-grid\">")
+  let recents = split(recents_str, ",")
+  for rec in recents {
+    let app_id = "os.app." + trim(rec)
+    if exists(app_id) {
+      let rname = dim(app_id, "name")
+      let ricon = dim(app_id, "icon")
+      if ricon == "" { set ricon = substring(rname, 0, 2) }
+      print("<div class=\"launcher-item\" data-app=\"" + trim(rec) + "\"><span class=\"launcher-icon\">" + ricon + "</span><span class=\"launcher-name\">" + rname + "</span></div>")
+    }
+  }
+  print("</div></div>")
+}
+
+// All apps by category
+print("<div class=\"launcher-section\"><div class=\"launcher-section-title\">All Apps</div><div class=\"launcher-grid\">")
 let all_shapes = shapes_under("os.app.")
-for app_sh in all_shapes {
+for app_sh in sort_list(all_shapes) {
   let app_type = dim(app_sh, "type")
   if app_type == "app" {
     let app_display = dim(app_sh, "name")
+    let app_icon = dim(app_sh, "icon")
+    let app_cat = dim(app_sh, "category")
+    if app_icon == "" { set app_icon = substring(app_display, 0, 2) }
     let app_key = app_sh
     if starts_with(app_key, "os.app.") {
       set app_key = substring(app_key, 7, len(app_key))
     }
-    print("<div class=\"launcher-item\" data-app=\"" + app_key + "\">" + app_display + "</div>")
+    print("<div class=\"launcher-item\" data-app=\"" + app_key + "\" data-category=\"" + app_cat + "\"><span class=\"launcher-icon\">" + app_icon + "</span><span class=\"launcher-name\">" + app_display + "</span></div>")
   }
 }
+print("</div></div>")
 
 print("</div></div></div>")
 

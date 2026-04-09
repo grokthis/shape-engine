@@ -1,6 +1,8 @@
-shape os.app.docs {
+shape os.app.docs : os {
   type: app
+  name: Docs
+  icon: ??
+  category: system
   layer: 5
-  name: "Documentation"
   "Shape OS documentation browser."
 }
