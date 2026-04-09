@@ -167,6 +167,38 @@ func main() {
 		bootOS(eng)
 	}
 
+	// Bootstrap desktop: create workspaces and default windows if missing.
+	if _, ok := eng.GetShape("os.desktop.workspace.1"); !ok {
+		wsCount := 3
+		if sh, ok := eng.GetShape("os.config.desktop.workspaces"); ok && sh.Character.Content != "" {
+			fmt.Sscanf(sh.Character.Content, "%d", &wsCount)
+		}
+		for i := 1; i <= wsCount; i++ {
+			ws := &shape.Shape{ID: shape.ID(fmt.Sprintf("os.desktop.workspace.%d", i))}
+			ws.Character.Dimensions = map[string]string{"type": "workspace", "layout": "hsplit"}
+			ws.Structure.Emergence.Layer = 5
+			eng.AddShape(ws)
+		}
+
+		defaultApps := "shell"
+		if sh, ok := eng.GetShape("os.config.desktop.default.apps"); ok && sh.Character.Content != "" {
+			defaultApps = sh.Character.Content
+		}
+		for i, appName := range strings.Split(defaultApps, ",") {
+			appName = strings.TrimSpace(appName)
+			winID := shape.ID("os.desktop.window." + appName)
+			win := &shape.Shape{ID: winID}
+			focused := "false"
+			if i == 0 {
+				focused = "true"
+			}
+			win.Character.Dimensions = map[string]string{"type": "window", "app": appName, "focused": focused}
+			win.Structure.Emergence.Layer = 5
+			win.Structure.Transformation.Deps = []shape.ID{"os.desktop.workspace.1"}
+			eng.AddShape(win)
+		}
+	}
+
 	// Wire LLM client. Reads API key from shape config, then env var.
 	// The adapter reads live config on every call so Settings changes
 	// take effect immediately without restart.
