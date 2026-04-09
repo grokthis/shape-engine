@@ -140,7 +140,11 @@ func handleRequestJS(this js.Value, args []js.Value) interface{} {
 		eng.SetActor("system")
 	}
 	out, err := lang.EvalWithScope(prog, eng, "", scope)
-	eng.SetActor(prevActor)
+	// Restore actor only for GET (system mode was temporary).
+	// POST handlers may legitimately change the actor (lock/unlock).
+	if method == "GET" {
+		eng.SetActor(prevActor)
+	}
 	if err != nil {
 		return js.ValueOf(fmt.Sprintf(`{"status":500,"contentType":"text/plain","body":"eval error: %s"}`, err))
 	}

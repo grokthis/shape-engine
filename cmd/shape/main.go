@@ -1,581 +1,398 @@
-// Shape - coherence shell.
+// Command shape is the native CLI for Shape OS.
+// Boots the engine, loads shapes, serves HTTP, and provides a REPL.
 //
 // Usage:
 //
-//	shape <program> [shapes...]   # What coheres with these shapes?
-//	shape compile <file.shape>    # Compile text to binary
+//	shape                    # Boot OS, serve HTTP, open REPL
+//	shape -port 8080         # Custom port (default 3000)
+//	shape -no-serve          # REPL only, no HTTP
 //
-// Or register as shell/interpreter:
-//
-//	#!/usr/bin/env shape
-//
-// Then: ./program.shp @alice @knows ?
-//
-// The program is a shape structure. Arguments are shapes.
-// Output is what coheres.
+// The engine is the same one that runs in WASM. This is the native substrate.
 package main
 
 import (
 	"bufio"
+	"encoding/json"
+	"flag"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
+
+	"github.com/ashbuilds/shape-engine/pkg/engine"
+	"github.com/ashbuilds/shape-engine/pkg/lang"
+	"github.com/ashbuilds/shape-engine/pkg/shape"
+	"github.com/ashbuilds/shape-engine/pkg/transform"
+	"github.com/ashbuilds/shape-engine/shapes"
 )
 
+var eng *engine.Engine
+
 func main() {
-	if len(os.Args) < 2 {
-		repl(nil, nil)
-		return
-	}
+	port := flag.Int("port", 3000, "HTTP port")
+	noServe := flag.Bool("no-serve", false, "skip HTTP server")
+	flag.Parse()
 
-	// Special: compile command
-	if os.Args[1] == "compile" {
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: shape compile <file.shape>")
-			return
-		}
-		compile(os.Args[2])
-		return
-	}
+	eng = engine.New()
 
-	// Load program
-	program := os.Args[1]
-	emu, parser, err := load(program)
-	if err != nil {
-		fmt.Printf("Error loading %s: %v\n", program, err)
-		return
-	}
-
-	// No query args = interactive mode
-	if len(os.Args) == 2 {
-		repl(emu, parser)
-		return
-	}
-
-	// Query: args become shapes, find what coheres
-	args := os.Args[2:]
-	results, bindings := queryFromArgs(emu, parser, args)
-
-	// If we have bindings and they differ from results, print bindings
-	if len(bindings) > 0 {
-		for _, id := range bindings {
-			s := emu.Get(id)
-			if s != nil {
-				printValue(s)
-				fmt.Println()
+	// Register agent transform.
+	agentTx := &transform.AgentTransform{
+		Eval: func(source string, content string, _ interface{}) (string, error) {
+			prog, err := lang.Parse(content)
+			if err != nil {
+				return "", err
 			}
-		}
-	} else {
-		printResults(emu, results)
+			scope := map[string]string{"source": source}
+			return lang.EvalWithScope(prog, eng, "", scope)
+		},
 	}
+	eng.RegisterTransform(agentTx)
+
+	// Register test transform.
+	testTx := &transform.TestTransform{
+		Eval: func(source string, content string) (string, error) {
+			prog, err := lang.Parse(content)
+			if err != nil {
+				return "", err
+			}
+			return lang.Eval(prog, eng, "")
+		},
+	}
+	eng.RegisterTransform(testTx)
+
+	// Boot OS from embedded shapes.
+	eng.SetActor("system")
+	bootOS(eng)
+	eng.SetActor("")
+
+	fmt.Printf("Shape OS ready (%d shapes)\n", eng.ShapeCount())
+
+	if !*noServe {
+		go serve(*port)
+		fmt.Printf("http://localhost:%d\n", *port)
+	}
+
+	repl()
 }
 
-// load reads a program (.shp binary or .shape text)
-func load(path string) (*Emulator, *Parser, error) {
-	emu := NewEmulator()
-	parser := NewParser(emu)
+func bootOS(eng *engine.Engine) {
+	type shapeFile struct {
+		path  string
+		layer int
+		data  string
+	}
 
-	if strings.HasSuffix(path, ".shp") {
-		// Binary - load shapes and names
-		names, err := emu.LoadPagesWithNames(path)
+	var files []shapeFile
+	fs.WalkDir(shapes.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
-		parser.SetNames(names)
-	} else {
-		// Text - parse (ParseFile sets baseDir for relative paths)
-		if err := parser.ParseFile(path); err != nil {
-			return nil, nil, err
+		if d.IsDir() || !strings.HasSuffix(path, ".sl") {
+			return nil
 		}
-	}
-
-	// Run coherence pass FIRST - collapse duplicate shapes
-	// This ensures format engine finds canonical predicates
-	emu.CoherencePass()
-
-	// Track shape count before format engine
-	shapeCountBefore := len(emu.shapes)
-
-	// Run format coherence - derives shapes from files with formats
-	fe := NewFormatEngine(emu, parser)
-	fe.Cohere()
-
-	// Only run second coherence pass if format engine created new shapes
-	if len(emu.shapes) > shapeCountBefore {
-		emu.CoherencePass()
-	}
-
-	// Create scheduler for coherence verification (file existence, etc.)
-	// The scheduler uses shortest-coherent-distance algorithm
-	emu.scheduler = NewScheduler(emu)
-
-	return emu, parser, nil
-}
-
-// queryFromArgs interprets CLI args as a natural query
-// 1 arg:  concept -> return its connections
-// 2 args: concept predicate -> find (concept predicate ?)
-// 3 args: subject predicate object -> match triple (? is wildcard)
-func queryFromArgs(emu *Emulator, parser *Parser, args []string) ([]ShapeID, []ShapeID) {
-	if len(args) == 0 {
-		return nil, nil
-	}
-
-	// Resolve args to shape IDs (_ becomes wildcard)
-	resolve := func(arg string) ShapeID {
-		if arg == "_" {
-			return 0 // Wildcard
+		data, err := shapes.FS.ReadFile(path)
+		if err != nil {
+			return err
 		}
-		// Try name lookup first
-		if id := parser.Lookup(arg); id != 0 {
-			return id
+		s := string(data)
+		layer := 4
+		if m := regexp.MustCompile(`layer:\s*(\d+)`).FindStringSubmatch(s); m != nil {
+			fmt.Sscanf(m[1], "%d", &layer)
 		}
-		// Try as literal value
-		for _, s := range emu.shapes {
-			if s.Type == TypeString && string(s.V) == arg {
-				return s.ID
-			}
+		files = append(files, shapeFile{path, layer, s})
+		return nil
+	})
+
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].layer != files[j].layer {
+			return files[i].layer < files[j].layer
 		}
-		return 0
-	}
+		return files[i].path < files[j].path
+	})
 
-	switch len(args) {
-	case 1:
-		// Single concept: return its connections
-		id := resolve(args[0])
-		if id == 0 {
-			return nil, nil
-		}
-		s := emu.Get(id)
-		if s == nil {
-			return nil, nil
-		}
-		return s.C, s.C
-
-	case 2:
-		// concept predicate: find (concept predicate ?)
-		subj := resolve(args[0])
-		pred := resolve(args[1])
-		return findTriples(emu, subj, pred, 0)
-
-	default:
-		// 3+ args: subject predicate object
-		subj := resolve(args[0])
-		pred := resolve(args[1])
-		obj := resolve(args[2])
-		return findTriples(emu, subj, pred, obj)
-	}
-}
-
-// findTriples finds triples matching pattern (0 = wildcard)
-func findTriples(emu *Emulator, subj, pred, obj ShapeID) ([]ShapeID, []ShapeID) {
-	var results []ShapeID
-	var bindings []ShapeID
-
-	// Resolve query parameters to canonical IDs
-	subj = emu.Resolve(subj)
-	pred = emu.Resolve(pred)
-	obj = emu.Resolve(obj)
-
-	for _, s := range emu.shapes {
-		if s.Type != TypeList || len(s.C) < 3 {
+	for _, f := range files {
+		prog, err := lang.Parse(f.data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: parse error: %v\n", f.path, err)
 			continue
 		}
-
-		// Resolve connection IDs to canonical forms
-		c0 := emu.Resolve(s.C[0])
-		c1 := emu.Resolve(s.C[1])
-		c2 := emu.Resolve(s.C[2])
-
-		// Match pattern
-		match := true
-		var binding ShapeID
-
-		if subj != 0 && c0 != subj {
-			match = false
-		} else if subj == 0 {
-			binding = c0
-		}
-
-		if match && pred != 0 && c1 != pred {
-			match = false
-		} else if pred == 0 && match {
-			binding = c1
-		}
-
-		if match && obj != 0 && c2 != obj {
-			match = false
-		} else if obj == 0 && match {
-			binding = c2
-		}
-
-		if match {
-			results = append(results, s.ID)
-			if binding != 0 {
-				bindings = append(bindings, binding)
-			}
+		_, err = lang.Eval(prog, eng, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: eval error: %v\n", f.path, err)
 		}
 	}
-
-	return results, bindings
 }
 
-// cohere finds shapes that match a query pattern
-func cohere(emu *Emulator, parser *Parser, query string) []ShapeID {
-	results, _ := cohereWithBindings(emu, parser, query)
-	return results
+// --- HTTP ---
+
+func serve(port int) {
+	http.HandleFunc("/", handleHTTP)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
+		fmt.Fprintf(os.Stderr, "http: %v\n", err)
+	}
 }
 
-// cohereWithBindings finds shapes that match and returns variable bindings
-func cohereWithBindings(emu *Emulator, parser *Parser, query string) ([]ShapeID, []ShapeID) {
-	query = strings.TrimSpace(query)
+func handleHTTP(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
+	path := r.URL.Path
+	queryStr := r.URL.RawQuery
 
-	// Simple word query (no parentheses, no @) - find by name or value
-	if !strings.HasPrefix(query, "(") && !strings.HasPrefix(query, "@") {
-		return findByNameOrValue(emu, parser, query)
+	// Read body for POST.
+	var body string
+	if r.Body != nil {
+		buf := make([]byte, 1<<20) // 1MB max
+		n, _ := r.Body.Read(buf)
+		body = string(buf[:n])
 	}
 
-	// Reference query (@name) - find by name and return connections
-	if strings.HasPrefix(query, "@") && !strings.Contains(query, " ") {
-		name := strings.TrimPrefix(query, "@")
-		if id := parser.Lookup(name); id != 0 {
-			// Return shapes connected to this one
-			s := emu.Get(id)
-			if s != nil {
-				return s.C, s.C
-			}
-		}
-		return nil, nil
-	}
-
-	// Triple pattern query
-	startID := emu.nextID
-
-	// Handle variable marker
-	query = strings.ReplaceAll(query, "@_", "@_var_")
-	query = strings.ReplaceAll(query, " _ ", " @_var_ ")
-
-	if err := parser.ParseString(query); err != nil {
-		return nil, nil
-	}
-
-	// Find query shapes (newly created) - only lists/triples, not variables
-	var queryShapes []*Shape
-	var queryIDs []ShapeID // Track IDs for cleanup
-	for id := startID; id < emu.nextID; id++ {
-		queryIDs = append(queryIDs, id)
-		if s := emu.Get(id); s != nil && s.Type == TypeList {
-			queryShapes = append(queryShapes, s)
-		}
-	}
-
-	if len(queryShapes) == 0 {
-		// Clean up any shapes created during failed parse
-		for _, id := range queryIDs {
-			emu.Collapse(id)
-		}
-		return nil, nil
-	}
-
-	varID := parser.Lookup("_var_")
-
-	// Find what coheres with query
-	var results []ShapeID
-	var bindings []ShapeID
-
-	// For each shape in the program, check if it coheres with query
-	for id, s := range emu.shapes {
-		if id >= startID {
-			continue // Skip query shapes themselves
-		}
-		if binding := matchWithBinding(emu, s, queryShapes, varID); binding != 0 {
-			results = append(results, id)
-			bindings = append(bindings, binding)
-		}
-	}
-
-	// Clean up query shapes - they were only needed for matching
-	for _, id := range queryIDs {
-		emu.Collapse(id)
-	}
-
-	return results, bindings
-}
-
-// findByNameOrValue finds shapes by name lookup or value match
-func findByNameOrValue(emu *Emulator, parser *Parser, query string) ([]ShapeID, []ShapeID) {
-	// First try name lookup
-	if id := parser.Lookup(query); id != 0 {
-		s := emu.Get(id)
-		if s != nil {
-			// Return connections
-			return s.C, s.C
-		}
-	}
-
-	// Then try value match
-	var results []ShapeID
-	queryBytes := []byte(query)
-	for id, s := range emu.shapes {
-		if s.Type == TypeString && bytesEqual(s.V, queryBytes) {
-			results = append(results, id)
-		}
-	}
-
-	return results, results
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// matchWithBinding checks if a shape matches and returns the variable binding
-func matchWithBinding(emu *Emulator, s *Shape, query []*Shape, varID ShapeID) ShapeID {
-	for _, q := range query {
-		// If query is a triple (list with 3 connections), match structure
-		if q.Type == TypeList && len(q.C) >= 3 {
-			if s.Type != TypeList || len(s.C) < 3 {
-				continue
-			}
-
-			// Check each position, track binding
-			match := true
-			var binding ShapeID
-			for i := 0; i < 3 && i < len(q.C) && i < len(s.C); i++ {
-				qc := q.C[i]
-				sc := s.C[i]
-
-				// Variable matches anything - capture binding
-				if qc == varID {
-					binding = sc
-					continue
-				}
-
-				// Must be same shape (same ID or same value)
-				if qc != sc && !shapesEqual(emu, qc, sc) {
-					match = false
-					break
-				}
-			}
-
-			if match {
-				if binding == 0 {
-					binding = s.ID // Return the shape itself if no variable
-				}
-				return binding
-			}
-		}
-	}
-
-	return 0
-}
-
-// shapesEqual checks if two shapes have equal values
-func shapesEqual(emu *Emulator, a, b ShapeID) bool {
-	sa, sb := emu.Get(a), emu.Get(b)
-	if sa == nil || sb == nil {
-		return false
-	}
-	if sa.Type != sb.Type {
-		return false
-	}
-	if len(sa.V) != len(sb.V) {
-		return false
-	}
-	for i := range sa.V {
-		if sa.V[i] != sb.V[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func printResults(emu *Emulator, results []ShapeID) {
-	if len(results) == 0 {
-		fmt.Println("No results")
+	route := findRoute(eng, method, path)
+	if route == nil {
+		http.NotFound(w, r)
 		return
 	}
 
-	for _, id := range results {
-		s := emu.Get(id)
-		if s == nil {
+	// Build scope.
+	scope := make(map[string]string)
+	for k, v := range route.Character.Dimensions {
+		scope[k] = v
+	}
+	scope["method"] = method
+	scope["path"] = path
+	scope["query"] = queryStr
+	scope["body"] = body
+
+	for _, param := range strings.Split(queryStr, "&") {
+		if param == "" {
 			continue
 		}
-		printShape(emu, s)
-	}
-}
-
-func printShape(emu *Emulator, s *Shape) {
-	switch s.Type {
-	case TypeList:
-		// Print as triple if 3 connections
-		if len(s.C) >= 3 {
-			fmt.Print("(")
-			for i, c := range s.C[:3] {
-				if i > 0 {
-					fmt.Print(" ")
-				}
-				if cs := emu.Get(c); cs != nil {
-					printValue(cs)
-				}
-			}
-			fmt.Println(")")
+		kv := strings.SplitN(param, "=", 2)
+		if len(kv) == 2 {
+			scope["q_"+kv[0]] = kv[1]
+		} else {
+			scope["q_"+kv[0]] = ""
 		}
-	default:
-		printValue(s)
-		fmt.Println()
 	}
-}
 
-func printValue(s *Shape) {
-	switch s.Type {
-	case TypeString:
-		fmt.Printf("%s", s.V)
-	case TypeContent:
-		// File content - print as string
-		fmt.Printf("%s", s.V)
-	case TypeInt:
-		// Decode int
-		if len(s.V) >= 8 {
-			fmt.Printf("%d", int64(s.V[0])|int64(s.V[1])<<8|int64(s.V[2])<<16|int64(s.V[3])<<24)
-		}
-	default:
-		fmt.Printf("[%d:%s]", s.ID, typeName(s.Type))
+	extractPathParams(route.Character.Dimensions["path"], path, scope)
+
+	handlerID := route.Character.Dimensions["handler"]
+	if handlerID == "" {
+		http.Error(w, "route has no handler", 500)
+		return
 	}
-}
+	handler, ok := eng.GetShape(shape.ID(handlerID))
+	if !ok {
+		http.Error(w, "handler not found: "+handlerID, 500)
+		return
+	}
 
-func compile(path string) {
-	emu := NewEmulator()
-	parser := NewParser(emu)
-
-	f, err := os.Open(path)
+	prog, err := lang.Parse(handler.Character.Content)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	defer f.Close()
-
-	if err := parser.Parse(f); err != nil {
-		fmt.Printf("Parse error: %v\n", err)
+		http.Error(w, "parse error: "+err.Error(), 500)
 		return
 	}
 
-	outPath := strings.TrimSuffix(path, ".shape") + ".shp"
-	if err := emu.SavePagesWithNames(outPath, parser.Names()); err != nil {
-		fmt.Printf("Save error: %v\n", err)
+	prevActor := eng.Actor()
+	if method == "GET" {
+		eng.SetActor("system")
+	}
+	out, err := lang.EvalWithScope(prog, eng, "", scope)
+	if method == "GET" {
+		eng.SetActor(prevActor)
+	}
+	if err != nil {
+		http.Error(w, "eval error: "+err.Error(), 500)
 		return
 	}
 
-	fmt.Printf("Compiled %d shapes, %d names -> %s\n", len(emu.shapes), len(parser.Names()), outPath)
+	ct := route.Character.Dimensions["content_type"]
+	if ct == "" {
+		ct = "text/html; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", ct)
+	fmt.Fprint(w, out)
 }
 
-func repl(emu *Emulator, parser *Parser) {
-	if emu == nil {
-		emu = NewEmulator()
-		parser = NewParser(emu)
-	}
+// --- REPL ---
 
-	fmt.Println("Shape (Ctrl+D to exit)")
-	fmt.Printf("%d shapes loaded\n", len(emu.shapes))
-	fmt.Println()
-
+func repl() {
 	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+
 	for {
 		fmt.Print("> ")
 		if !scanner.Scan() {
 			break
 		}
-
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
 		if line == "" {
 			continue
 		}
+		out := execShellLine(eng, line)
+		if out != "" {
+			fmt.Print(out)
+			if !strings.HasSuffix(out, "\n") {
+				fmt.Println()
+			}
+		}
+	}
+}
 
-		// Commands
-		if line == ":q" || line == ":quit" {
+// --- Shell execution ---
+
+func execShellLine(eng *engine.Engine, line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	if strings.Contains(line, " | ") {
+		segments := strings.Split(line, " | ")
+		var output string
+		for _, seg := range segments {
+			seg = strings.TrimSpace(seg)
+			if output != "" {
+				seg = seg + " " + output
+			}
+			output = execShellLine(eng, seg)
+		}
+		return output
+	}
+
+	parts := strings.Fields(line)
+	cmd := parts[0]
+	argList := parts[1:]
+
+	prefix := ""
+	if sh, ok := eng.GetShape("os.session.shell.prefix"); ok {
+		prefix = sh.Character.Content
+	}
+	home := ""
+	if sh, ok := eng.GetShape("os.config.shell.home"); ok {
+		home = sh.Character.Content
+	}
+
+	cmdShape, ok := eng.GetShape(shape.ID("os.shell.cmd." + cmd))
+	if ok && cmdShape.Character.Dimensions["type"] == "exec" {
+		scope := map[string]string{
+			"args":   strings.Join(argList, " "),
+			"line":   line,
+			"cmd":    cmd,
+			"prefix": prefix,
+			"home":   home,
+		}
+		for i, a := range argList {
+			scope[fmt.Sprintf("arg%d", i)] = a
+		}
+		prog, err := lang.Parse(cmdShape.Character.Content)
+		if err != nil {
+			return "parse error: " + err.Error() + "\n"
+		}
+		out, err := lang.EvalWithScope(prog, eng, "", scope)
+		if err != nil {
+			return "error: " + err.Error() + "\n"
+		}
+		return out
+	}
+
+	prog, err := lang.Parse(line)
+	if err != nil {
+		return "error: " + err.Error() + "\n"
+	}
+	out, err := lang.Eval(prog, eng, "")
+	if err != nil {
+		return "error: " + err.Error() + "\n"
+	}
+	return out
+}
+
+// --- Routing ---
+
+func findRoute(eng *engine.Engine, method, path string) *shape.Shape {
+	var bestRoute *shape.Shape
+	var bestLen int
+
+	for _, s := range eng.Shapes() {
+		if s.Character.Dimensions["type"] != "route" {
+			continue
+		}
+		routeMethod := s.Character.Dimensions["method"]
+		if routeMethod != "" && !strings.EqualFold(routeMethod, method) {
+			continue
+		}
+		routePath := s.Character.Dimensions["path"]
+		if routePath == path {
+			return s
+		}
+		if matchPattern(routePath, path) {
+			patternLen := len(strings.Split(routePath, "/"))
+			if patternLen > bestLen {
+				bestRoute = s
+				bestLen = patternLen
+			}
+		}
+	}
+	return bestRoute
+}
+
+func matchPattern(pattern, path string) bool {
+	if pattern == "" {
+		return false
+	}
+	patParts := strings.Split(pattern, "/")
+	pathParts := strings.Split(path, "/")
+
+	for i, pp := range patParts {
+		isCatchAll := strings.HasPrefix(pp, "{") && strings.HasSuffix(pp, "...}")
+		if isCatchAll {
+			return i < len(pathParts)
+		}
+		if i >= len(pathParts) {
+			return false
+		}
+		isParam := strings.HasPrefix(pp, "{") && strings.HasSuffix(pp, "}")
+		if !isParam && pp != pathParts[i] {
+			return false
+		}
+	}
+	return len(patParts) == len(pathParts)
+}
+
+func extractPathParams(pattern, path string, scope map[string]string) {
+	if pattern == "" {
+		return
+	}
+	patParts := strings.Split(pattern, "/")
+	pathParts := strings.Split(path, "/")
+
+	for i, pp := range patParts {
+		if i >= len(pathParts) {
 			break
 		}
-		if line == ":s" || line == ":stats" {
-			stats(emu)
-			continue
-		}
-		if line == ":l" || line == ":list" {
-			listShapes(emu)
-			continue
-		}
-		if strings.HasPrefix(line, ":save ") {
-			path := strings.TrimSpace(line[6:])
-			if err := emu.SavePages(path); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			} else {
-				fmt.Printf("Saved %s\n", path)
+		if strings.HasPrefix(pp, "{") && strings.HasSuffix(pp, "...}") {
+			name := pp[1 : len(pp)-4]
+			if i < len(pathParts) {
+				scope["path_"+name] = strings.Join(pathParts[i:], "/")
 			}
-			continue
+			return
 		}
-
-		// Query or define
-		if strings.HasPrefix(line, "(") || strings.Contains(line, "?") {
-			// Query
-			results := cohere(emu, parser, line)
-			printResults(emu, results)
-		} else {
-			// Define
-			if err := parser.ParseString(line); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
+		if strings.HasPrefix(pp, "{") && strings.HasSuffix(pp, "}") {
+			name := pp[1 : len(pp)-1]
+			scope["path_"+name] = pathParts[i]
 		}
 	}
-	fmt.Println()
 }
 
-func stats(emu *Emulator) {
-	typeCounts := make(map[uint8]int)
-	for _, s := range emu.shapes {
-		typeCounts[s.Type]++
-	}
-	fmt.Printf("Shapes: %d\n", len(emu.shapes))
-	for t, c := range typeCounts {
-		fmt.Printf("  %s: %d\n", typeName(t), c)
-	}
-}
+// --- API helpers ---
 
-func listShapes(emu *Emulator) {
-	for _, s := range emu.shapes {
-		printShape(emu, s)
+func getShapeJSON(id string) string {
+	s, ok := eng.GetShape(shape.ID(id))
+	if !ok {
+		return "null"
 	}
-}
-
-func typeName(t uint8) string {
-	switch t {
-	case TypeNil:
-		return "nil"
-	case TypeInt:
-		return "int"
-	case TypeFloat:
-		return "float"
-	case TypeString:
-		return "string"
-	case TypeBool:
-		return "bool"
-	case TypeFile:
-		return "file"
-	case TypeList:
-		return "list"
-	case TypeRef:
-		return "ref"
-	case TypeContent:
-		return "content"
-	case TypePrint:
-		return "print"
-	default:
-		return fmt.Sprintf("t%d", t)
-	}
+	data, _ := json.Marshal(s)
+	return string(data)
 }

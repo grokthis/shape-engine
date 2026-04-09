@@ -4,7 +4,10 @@
 package engine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -12,14 +15,22 @@ import (
 	"github.com/ashbuilds/shape-engine/pkg/transform"
 )
 
+// sortedEntry is one slot in the time-dilated index.
+// Pre-sorted by ID so Signature() is a pure linear fold.
+type sortedEntry struct {
+	id string
+	s  *shape.Shape
+}
+
 // Namespace tiers: owner (user/agent), local (os), global (world).
 // Write isolation: actors can only write to their own namespace prefix.
 
-// namespaceForActor returns the writable namespace prefix for an actor.
+// Old comment line removed by rename.
 //   - "ash"            → "user.ash."
 //   - "agent:copilot"  → "agent.copilot."
 //   - "" or "system"   → "" (unchecked bootstrap mode)
-func namespaceForActor(actor string) string {
+// NamespaceForActor returns the writable namespace prefix for an actor.
+func NamespaceForActor(actor string) string {
 	if actor == "system" {
 		return "" // unrestricted
 	}
@@ -95,6 +106,14 @@ type Engine struct {
 	// This is a structural position, not a timestamp.
 	tick uint64
 
+	// dilation is the time dilation factor. When > 1, N inner mutations
+	// share a single outer tick. Set via the dilate builtin. 0 or 1 = normal.
+	dilation uint64
+
+	// dilationCount tracks mutations within the current dilation window.
+	// When it reaches dilation, the outer tick advances and the counter resets.
+	dilationCount uint64
+
 	// actor is the user shape ID of the current session.
 	// Every trace moment is structurally connected to the actor.
 	// This is the audit trail: attention costs ticks.
@@ -108,6 +127,14 @@ type Engine struct {
 	// overlayCache maps "actor:requestedID" → resolved ID for overlay lookups.
 	// Invalidated on any mutation to user/agent namespace shapes.
 	overlayCache map[string]shape.ID
+
+	// sorted is the time-dilated index: shapes pre-ordered by ID so that
+	// Signature() never allocates or sorts. Binary search finds the prefix
+	// boundary, then the fold is a linear scan over contiguous hashes.
+	// Maintained on every add/remove. The dilation: O(log n) insert pays
+	// once so the fold runs in O(k) where k = matching shapes.
+	sorted []sortedEntry
+
 
 	// onMutate is called after every mutation (AddShape, Edit, Block).
 	// The engine is unlocked when this fires. Used for auto-persistence.
@@ -136,7 +163,7 @@ func (e *ErrNamespace) Error() string {
 // checkWrite verifies the current actor can write to the target shape ID.
 // Returns nil if allowed, ErrNamespace if not.
 func (e *Engine) checkWrite(target shape.ID) error {
-	prefix := namespaceForActor(e.actor)
+	prefix := NamespaceForActor(e.actor)
 	if prefix == "" {
 		return nil // bootstrap/system mode
 	}
@@ -243,6 +270,39 @@ func (e *Engine) Actor() string {
 	return e.actor
 }
 
+// advanceTick increments the global tick, respecting time dilation.
+// Under dilation N, the outer tick advances once per N mutations.
+// Must be called with lock held.
+func (e *Engine) advanceTick() {
+	if e.dilation <= 1 {
+		e.tick++
+		return
+	}
+	e.dilationCount++
+	if e.dilationCount >= e.dilation {
+		e.tick++
+		e.dilationCount = 0
+	}
+}
+
+// SetDilation sets the time dilation factor. N inner mutations share one
+// outer tick. Set to 0 or 1 to disable. Returns the previous factor.
+func (e *Engine) SetDilation(factor uint64) uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	prev := e.dilation
+	e.dilation = factor
+	e.dilationCount = 0
+	return prev
+}
+
+// Dilation returns the current time dilation factor.
+func (e *Engine) Dilation() uint64 {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.dilation
+}
+
 // AddShape adds a shape to the engine with namespace enforcement.
 // Returns ErrNamespace if the current actor cannot write to this shape's namespace.
 func (e *Engine) AddShape(s *shape.Shape) error {
@@ -295,6 +355,8 @@ func (e *Engine) addShapeInternal(s *shape.Shape) {
 	}
 
 	e.invalidateOverlayCache(s.ID)
+	e.stampHash(s)
+	e.sortedInsert(s)
 	e.recordMoment("add", s.ID, nil)
 	e.mu.Unlock()
 
@@ -309,6 +371,7 @@ func (e *Engine) RemoveShape(id shape.ID) error {
 	e.mu.Lock()
 	delete(e.shapes, id)
 	delete(e.dependents, id)
+	e.sortedRemove(id)
 	e.invalidateOverlayCache(id)
 	e.recordMoment("remove", id, nil)
 	e.mu.Unlock()
@@ -360,7 +423,7 @@ func (e *Engine) ResolveShape(id shape.ID) (*shape.Shape, shape.ID, bool) {
 	}
 
 	// Build resolution chain: user override → original.
-	prefix := namespaceForActor(actor)
+	prefix := NamespaceForActor(actor)
 	userID := shape.ID(prefix + suffix)
 
 	if s, ok := e.shapes[userID]; ok {
@@ -457,7 +520,7 @@ func (e *Engine) Promote(sourceID shape.ID, targetTier string) ([]shape.ID, erro
 	// Copy each shape with rewritten ID.
 	promoted := make([]shape.ID, 0, len(toPromote))
 	e.mu.Lock()
-	e.tick++
+	e.advanceTick()
 	for _, srcID := range toPromote {
 		src, ok := e.shapes[srcID]
 		if !ok {
@@ -547,10 +610,11 @@ func (e *Engine) Edit(id shape.ID, newContent string) (*PropagationReport, error
 	}
 
 	// Advance the global tick.
-	e.tick++
+	e.advanceTick()
 
 	s.Character.Content = newContent
 	s.Tick = e.tick
+	e.stampHash(s)
 
 	// Propagate through all dependents. The edit isn't complete
 	// until every consequence has been processed.
@@ -692,8 +756,9 @@ func (e *Engine) Block(shapeID shape.ID, blockedAuthor shape.ID, warning string)
 	}
 
 	// Advance tick.
-	e.tick++
+	e.advanceTick()
 	s.Tick = e.tick
+	e.stampHash(s)
 
 	// Propagate the block wave. Walk all dependents; any shape authored
 	// by the blocked user gets withdrawn.
@@ -752,8 +817,9 @@ func (e *Engine) EditDim(id shape.ID, key, value string) error {
 		s.Character.Dimensions = make(map[string]string)
 	}
 	s.Character.Dimensions[key] = value
-	e.tick++
+	e.advanceTick()
 	s.Tick = e.tick
+	e.stampHash(s)
 	e.recordMoment("edit", id, nil)
 	e.mu.Unlock()
 	e.notifyMutate()
@@ -790,12 +856,112 @@ func (e *Engine) SetContent(id shape.ID, content string) error {
 		}
 	}
 	s.Character.Content = content
-	e.tick++
+	e.advanceTick()
 	s.Tick = e.tick
+	e.stampHash(s)
 	e.recordMoment("edit", id, nil)
 	e.mu.Unlock()
 	e.notifyMutate()
 	return nil
+}
+
+// stampHash computes and stores the structural hash on a shape.
+// Called at birth (AddShape) and at every mutation. The hash encodes
+// everything that makes this moment this moment: ID, content, dimensions,
+// layer, tick. No dep hashes — the shape's hash is its own identity.
+// Tree signatures are computed by folding over these intrinsic hashes.
+// Must be called with lock held.
+func (e *Engine) stampHash(s *shape.Shape) {
+	h := sha256.New()
+	h.Write([]byte(s.ID))
+	h.Write([]byte{0})
+	h.Write([]byte(s.Character.Content))
+	h.Write([]byte{0})
+
+	// Dimensions: sorted keys for determinism.
+	var dimKeys []string
+	for k := range s.Character.Dimensions {
+		dimKeys = append(dimKeys, k)
+	}
+	sort.Strings(dimKeys)
+	for _, k := range dimKeys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(s.Character.Dimensions[k]))
+		h.Write([]byte{0})
+	}
+
+	// Deps: the shape's own declared dependencies (IDs only, not their hashes).
+	// This is the shape's structure, not a Merkle tree.
+	for _, dep := range s.Structure.Transformation.Deps {
+		h.Write([]byte(dep))
+		h.Write([]byte{0})
+	}
+
+	// Layer and tick encode structural position and version.
+	fmt.Fprintf(h, "%d:%d", s.Structure.Emergence.Layer, s.Tick)
+	h.Write([]byte{0xFF})
+
+	copy(s.Hash[:], h.Sum(nil))
+}
+
+// sortedInsert adds a shape to the time-dilated index in O(log n).
+// Must be called with lock held.
+func (e *Engine) sortedInsert(s *shape.Shape) {
+	sid := string(s.ID)
+	i := sort.Search(len(e.sorted), func(j int) bool { return e.sorted[j].id >= sid })
+	// Update in place if already present (edit/re-add).
+	if i < len(e.sorted) && e.sorted[i].id == sid {
+		e.sorted[i].s = s
+		return
+	}
+	e.sorted = append(e.sorted, sortedEntry{})
+	copy(e.sorted[i+1:], e.sorted[i:])
+	e.sorted[i] = sortedEntry{id: sid, s: s}
+}
+
+// sortedRemove removes a shape from the time-dilated index in O(log n + k).
+// Must be called with lock held.
+func (e *Engine) sortedRemove(id shape.ID) {
+	sid := string(id)
+	i := sort.Search(len(e.sorted), func(j int) bool { return e.sorted[j].id >= sid })
+	if i < len(e.sorted) && e.sorted[i].id == sid {
+		e.sorted = append(e.sorted[:i], e.sorted[i+1:]...)
+	}
+}
+
+// Signature computes a structural hash over all shapes under a prefix.
+// Time-dilated: the sorted index is pre-computed, so this is a binary search
+// to find the prefix boundary + a linear fold over contiguous hashes.
+// No allocation, no sort, no cache. Always correct.
+func (e *Engine) Signature(prefix string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	h := sha256.New()
+
+	if prefix == "" {
+		// Full engine: linear scan, no search needed.
+		for i := range e.sorted {
+			h.Write(e.sorted[i].s.Hash[:])
+		}
+	} else {
+		// Binary search for first entry >= prefix.
+		start := sort.Search(len(e.sorted), func(i int) bool { return e.sorted[i].id >= prefix })
+		pfx := prefix + "."
+		for i := start; i < len(e.sorted); i++ {
+			sid := e.sorted[i].id
+			if sid != prefix && !strings.HasPrefix(sid, pfx) {
+				if sid > pfx {
+					break // Past the prefix range, done.
+				}
+				continue
+			}
+			h.Write(e.sorted[i].s.Hash[:])
+		}
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Status returns the current state of the engine.

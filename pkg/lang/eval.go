@@ -438,6 +438,8 @@ func (ev *evaluator) execTop(node Node) error {
 		return ev.execBlock(n)
 	case *UseStmt:
 		return ev.execUse(n)
+	case *DilateStmt:
+		return ev.execDilate(n)
 	case *IfStmt:
 		return ev.execTopIf(n)
 	case *ForStmt:
@@ -873,6 +875,21 @@ func (ev *evaluator) execUse(u *UseStmt) error {
 
 	// Evaluate in the current evaluator so fn defs register here.
 	_, err = ev.run(prog)
+	return err
+}
+
+func (ev *evaluator) execDilate(d *DilateStmt) error {
+	v, err := ev.evalExpr(d.Multiple)
+	if err != nil {
+		return err
+	}
+	factor := uint64(v.num)
+
+	prev := ev.eng.SetDilation(factor)
+	defer ev.eng.SetDilation(prev)
+
+	// Run the body as a single-statement program.
+	_, err = ev.run(&Program{Stmts: []Node{d.Body}})
 	return err
 }
 
@@ -2223,6 +2240,24 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		}
 		ev.eng.SetActor(args[0].String())
 		return strVal(args[0].String()), nil
+
+	case "actor_ns":
+		// actor_ns() — return the writable namespace prefix for the current actor.
+		// "ash" → "user.ash", "agent:copilot" → "agent.copilot", "" → ""
+		ns := engine.NamespaceForActor(ev.eng.Actor())
+		// Trim trailing dot for display.
+		if len(ns) > 0 && ns[len(ns)-1] == '.' {
+			ns = ns[:len(ns)-1]
+		}
+		return strVal(ns), nil
+
+	case "signature":
+		// signature() or signature(prefix) — structural Merkle hash of shape tree.
+		prefix := ""
+		if len(args) >= 1 {
+			prefix = args[0].String()
+		}
+		return strVal(ev.eng.Signature(prefix)), nil
 
 	case "promote":
 		// promote(source_id, tier) — promote shape + dep tree to "local" or "global".

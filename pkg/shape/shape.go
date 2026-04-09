@@ -15,6 +15,12 @@ type Shape struct {
 	// tick records when it was last touched (directly or by propagation).
 	// Zero means the shape has never been through an edit cycle.
 	Tick uint64 `yaml:"tick,omitempty" json:"tick,omitempty"`
+
+	// Hash is the structural identity of this moment. Computed once when the
+	// shape is created or mutated. Encodes ID, content, dimensions, layer,
+	// and tick — everything that makes this moment this moment. Never
+	// invalidated: when the shape changes, a new hash is born with it.
+	Hash [32]byte `yaml:"-" json:"-"`
 }
 
 // ID is a hierarchical identifier. Components are dot-separated.

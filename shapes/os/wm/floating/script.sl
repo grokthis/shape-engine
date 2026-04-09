@@ -399,6 +399,39 @@ shape os.wm.floating.script : os.wm.floating {
     else closeLauncher();
   });
 
+  // Power buttons: lock and shutdown.
+  document.querySelectorAll('.launcher-power-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var action = this.dataset.action;
+      closeLauncher();
+      if (action === 'lock') {
+        fetch('/api/session/lock', { method: 'POST' }).then(function() {
+          document.getElementById('lock-screen').classList.add('active');
+        });
+      } else if (action === 'shutdown') {
+        fetch('/api/session/lock', { method: 'POST' }).then(function() {
+          document.getElementById('shutdown-screen').classList.add('active');
+        });
+      }
+    });
+  });
+
+  // Unlock button on lock screen.
+  var unlockBtn = document.querySelector('#lock-screen .lock-unlock');
+  if (unlockBtn) {
+    unlockBtn.addEventListener('click', function() {
+      var user = document.querySelector('#lock-screen .lock-user');
+      var userName = user ? user.textContent.trim() : '';
+      fetch('/api/session/unlock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user: userName})
+      }).then(function() {
+        document.getElementById('lock-screen').classList.remove('active');
+      });
+    });
+  }
+
   // Re-initialize WM state after workspace DOM replacement.
   // Called after fetch('/desktop/workspace') replaces #workspace.
   function wmReinit() {

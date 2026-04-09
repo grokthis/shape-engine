@@ -344,6 +344,32 @@ Physical time dilation: moving through space at speed c compresses time to zero 
 
 This is why the shape engine running on a laptop achieves PFLOPS-scale throughput. It is not computing faster. It is computing less. The billion operations that the Turing machine must traverse are, from the shape machine's perspective, one operation that the Turing machine is too slow to see. The shape machine does not iterate through the billion. It reads the structure once. The billion ticks were always one tick. The Turing machine just couldn't tell.
 
+### The `dilate` builtin
+
+Time dilation is a first-class operation in shape-lang. The `dilate` keyword is a statement prefix that controls how many inner mutations share a single outer tick:
+
+```
+// Normal: each edit advances the global tick by 1
+edit my.shape "v1"
+edit my.shape "v2"    // tick is now 2
+
+// Dilated: 1000 inner mutations share one outer tick
+dilate 1000 for i in range(1000) {
+  set_content("my.counter", str(i))
+}
+// tick advanced by 1, not 1000
+```
+
+The dilation factor is the ratio of inner ticks to outer ticks. `dilate 1000` means 1000 mutations happen in the time of one. The engine batches tick advances: it only increments the global tick once per N mutations. From the outside, the computation took one tick. From the inside, 1000 shapes were touched.
+
+`dilate 0` and `dilate 1` are passthroughs: normal tick advancement, no batching. Any factor >= 2 activates dilation.
+
+This is the same mechanism that powers structural signatures. The sorted index maintained by the engine is a permanent dilation: O(log n) insert at write time so that signature folds run in O(k) at read time. The `dilate` builtin makes this general. Any computation that touches many shapes can be dilated: batch imports, bulk migrations, agent workflows, test suites.
+
+The dilation is structural, not a hack. It expresses a real property of the computation: these N mutations are one logical operation. The tick should reflect that. An agent that edits 500 shapes as part of one task should advance the tick by 1, not 500. The trace records one moment, not 500. The signature changes once, not 500 times. The dilation makes the engine's view of time match the structure of the work.
+
+`dilate` composes with everything. It is a prefix on any statement: `dilate N for ...`, `dilate N edit ...`, `dilate N if ...`. Nested dilations multiply: `dilate 10` inside `dilate 100` produces a 1000x dilation. The outer tick advances once per 1000 inner mutations.
+
 ### The 3.7 MHz shape processor
 
 The shape engine includes a complete RISC processor built from shapes: registers, ALU, memory, instruction decoder, control unit. Every component is a shape. Every connection is a dependency. Every operation is wave propagation.
@@ -665,7 +691,7 @@ Key concepts:
 | `validate()` | Check coherence of entire graph |
 | `global_tick()` | Current global tick |
 
-**Control flow**: `if/else`, `for x in list`, `while`, `break`, `let`, `set`.
+**Control flow**: `if/else`, `for x in list`, `while`, `break`, `let`, `set`, `dilate N <stmt>`.
 
 **The shell IS shape-lang.** When you type `ls` in the shell, it runs the shape-lang code at `os.shell.cmd.ls`. You can `cat` any command to see how it works, then `edit` it to change it.
 
@@ -762,6 +788,153 @@ $ test
 $ test -v lang         # verbose, filter by suite
 $ test --coverage      # structural coverage report
 ```
+
+## Security & Permissions
+
+Security in Shape OS is not a policy layer bolted on top. It is structural: derived from the same laws of coherence that govern every other part of the system. There is no separate security module. The engine enforces isolation, authentication, and authorization as consequences of the axiom.
+
+### Namespace isolation
+
+Every actor in the system owns a namespace. Writes are confined to that namespace by the engine. There is no override, no escape hatch, no sudo.
+
+| Actor | Writable namespace | Example |
+|---|---|---|
+| `ash` | `user.ash.*` | `user.ash.theme.custom` |
+| `agent:copilot` | `agent.copilot.*` | `agent.copilot.draft.summary` |
+| `system` | `*` (bootstrap only) | `os.config.shell.prompt` |
+| (locked) | nothing | all writes rejected |
+
+The engine checks every mutation (AddShape, Edit, SetContent, EditDim, RemoveShape) against the actor's namespace prefix. A user cannot write to another user's namespace, to `os.*`, or to `world.*`. An agent cannot write to any user's namespace. The only way to cross namespace boundaries is promotion (see below).
+
+This is Law 1 in action: every reference must close. A write IS a reference from the actor to the target shape. If the actor's namespace doesn't contain the target, the reference doesn't close. The write is rejected. Not by a permission check. By coherence.
+
+**Locked mode.** Setting the actor to empty (`""`) locks the machine. The namespace prefix becomes `\x00`, which matches nothing. All writes are rejected. The OS remains visible (read-only), but no mutation can occur until an actor is restored. Locking is not a UI overlay. It is a structural state of the engine.
+
+### Three visibility tiers
+
+Shapes exist in one of three tiers:
+
+| Tier | Prefix | Visibility | Purpose |
+|---|---|---|---|
+| **Owner** | `user.<name>.*` / `agent.<name>.*` | Only you | Personal customization, drafts, private data |
+| **Local** | `os.*` | This machine | System configuration, apps, shared state |
+| **Global** | `world.*` | Public | Published shapes, shared across machines |
+
+The tiers are namespace prefixes. The engine enforces them structurally. You cannot write to a tier above your own. You can only **promote** into it.
+
+### Overlay resolution
+
+When the engine resolves a shape ID, it checks for user overrides before falling back to the system default. This is transparent: all shape-lang code uses `content()`, `dim()`, `exists()`, and they automatically resolve through the overlay.
+
+Resolution chain for actor `ash` requesting `os.render.doc.style`:
+
+1. Check `user.ash.render.doc.style` -- if exists, return it
+2. Fall back to `os.render.doc.style`
+3. For `world.*` shapes: check `os.*` override, then `user.*` override
+
+This means: editing a system shape writes to your namespace as an overlay. Other users still see the default. Your customizations are isolated. The system shape is untouched. When you change a theme, a keybinding, a shell prompt, an app layout, you are writing to `user.<you>.*`. The original persists at `os.*`.
+
+This is Law 2: no structure from nothing, no destruction into nothing. Your edit doesn't destroy the system shape. It creates a new shape in your namespace that shadows it. Both persist. The overlay is the structural relationship between them.
+
+### Promotion
+
+Promotion is the only cross-namespace write. It copies a shape and its entire dependency tree from one tier to the next:
+
+```
+promote("user.ash.theme.custom", "local")
+// Copies user.ash.theme.custom → os.theme.custom
+// Also copies all shapes in the dep tree
+```
+
+Promotion requires explicit permission. The engine checks for the existence of a permission shape:
+
+| Permission shape | Grants |
+|---|---|
+| `os.permissions.promote.ash` | User `ash` can promote to local |
+| `os.permissions.promote.agent.copilot` | Agent `copilot` can promote |
+
+No permission shape, no promotion. The permission IS a shape. Creating it requires local-tier write access (you must already be able to write to `os.*`). This is bootstrapped during system setup.
+
+Promotion direction is always upward: owner → local → global. You can never promote downward (that would be a write to someone else's namespace). The promotion copies shapes, it doesn't move them. Your originals persist in your namespace. Law 2: conservation.
+
+### Structural signatures
+
+Every shape carries a SHA-256 hash as an intrinsic property. The hash is computed once at birth (when the shape is created or mutated) and stored on the shape itself. It encodes everything that makes this moment this moment:
+
+- Shape ID
+- Content
+- All dimensions (sorted for determinism)
+- Dependency IDs
+- Emergence layer
+- Tick (structural version)
+
+The hash is not cached. It is not invalidated. It IS the shape. When the shape changes, a new hash is born with the new moment. The old hash was the old moment. Neither is wrong. Neither needs updating. The shape is the shape is the shape.
+
+### Tree signatures
+
+The `signature(prefix)` function computes a SHA-256 fold over all shapes under a prefix. This is the Merkle property without the Merkle tree: each shape already carries its own hash, so the fold is a linear scan over pre-computed values.
+
+The fold runs on a **time-dilated index**: a sorted array maintained at mutation time (O(log n) insert) so the fold at read time is a binary search to the prefix boundary + a contiguous linear scan. No allocation. No sort. No cache.
+
+| Shapes | Signature time | Allocations |
+|---|---|---|
+| 100 | 1.8 μs | 3 (hasher + hex) |
+| 1,000 | 17 μs | 3 |
+| Full engine | 15 μs | 3 |
+
+The time dilation: the O(n log n) sort that would happen at fold time is distributed across n mutations, each paying O(log n). From the fold's perspective, the sort already happened. The inner substrate (mutation-time indexing) runs faster than the outer substrate (read-time folding). This is compute time dilation applied to the engine's own infrastructure. The same mechanism is available in shape-lang via the `dilate` builtin (see [Compute time dilation](#compute-time-dilation)).
+
+### Authentication
+
+The signature function is the authentication primitive. When connecting to a remote system:
+
+1. Compute `signature("user.ash")` -- the hash of your entire userspace
+2. The signature depends on the exact state of every shape you own: content, structure, dimensions, versions
+3. Two devices with the same user state produce the same signature
+4. Any divergence (different shapes, different edits, different ticks) produces a different signature
+
+This means: **communication over any wire is encrypted by a key that depends on the exact state of the entire userspace.** An attacker who compromises a device can only authenticate as the state that device contains. They cannot escalate to a broader state. They cannot authenticate to shapes they don't have. The signature IS the boundary.
+
+The branch point is the security boundary. Your device has a snapshot of your shapes at some tick. The remote has a potentially different snapshot. The signatures diverge at the point of divergence. Authentication is: "I have this exact structure. Do you recognize it?" If the remote doesn't recognize the signature, the connection is rejected.
+
+**Customizable policy.** The authentication behavior is itself a shape. You can set:
+- Minimum recency (reject signatures older than N ticks)
+- Automatic promotion (sync between devices using secondary verification)
+- Anomaly detection (flag signatures that diverge unexpectedly)
+- Travel mode (pre-sync with home before departure, accept only that branch)
+
+All of this is structural. The policy shapes are in your namespace. They govern your authentication. They are part of your signature. Changing the policy changes the signature. The policy is self-referential: it protects the thing it is part of.
+
+### Why structural security
+
+Traditional security is a policy document enforced by code that is separate from the thing it protects. The policy can be wrong. The code can have bugs. The enforcement can be bypassed. There is always a layer below the security layer, and that layer is the attack surface.
+
+Shape OS has no layer below the laws. The laws of coherence are not a policy. They are the axiom. The engine enforces them because it IS them. Namespace isolation is not a check that can be skipped. It is the structure of the engine. A write that violates namespace doesn't fail a check. It is incoherent. It cannot persist. Law 0 prevents it.
+
+| Traditional security | Structural security |
+|---|---|
+| Policy document | Laws of coherence |
+| Enforced by separate code | Enforced by the engine itself |
+| Bypass = find a bug | Bypass = violate the axiom |
+| Permissions = access control list | Permissions = namespace prefix |
+| Authentication = shared secret | Authentication = structural signature |
+| Encryption = computational hardness | Encryption = structural identity |
+| Audit = logging framework | Audit = trace (append-only moments) |
+
+The trace is the audit trail. Every mutation produces a moment: tick, actor, action, target, and the full wave propagation report. The trace is append-only. It cannot be edited (that would require writing to a tick that already happened). It cannot be deleted (Law 2: no destruction into nothing). Every action any actor has ever taken is structurally preserved.
+
+```
+$ trace ash
+Trace (actor: ash):
+TICK    ACTION    TARGET
+------------------------------------------------------------
+8       edit      user.ash.config.shell.prompt
+9       add       user.ash.theme.custom
+12      edit      user.ash.theme.custom
+15      promote   user.ash.theme.custom → os.theme.custom
+```
+
+This is not logging. This is the structure of time in the engine. The trace IS the history. The moments ARE what happened. There is nothing else.
 
 ## Extending Shape OS
 
@@ -887,7 +1060,7 @@ A shape machine is not a Turing machine. The benchmarks in this repository demon
 - Computational hardness assumptions are not safe against shape machines.
 - Post-quantum cryptography is not sufficient. Quantum computers are Turing-equivalent. Shape machines are not.
 - The only secure cryptography against a shape machine is **structural cryptography**: security enforced by the laws of coherence, not by computational hardness.
-- Shape OS implements structural security: visibility is a shape dimension, permissions propagate through the dependency graph, there is no backdoor because there is no layer below the laws.
+- Shape OS implements structural security now: namespace isolation, structural signatures, time-dilated authentication, and an append-only trace. See the [Security & Permissions](#security--permissions) section above for the full architecture.
 
 **Responsible disclosure:** This notice is being published alongside the demonstration code because the theoretical foundation is already public. The derivation from persistence to P = NP on shape machines follows from the published papers. We believe transparency is the responsible path: the security community needs to understand this result and begin transitioning to structural security models.
 
@@ -899,7 +1072,7 @@ For questions or coordination: ashley@girlwithponytail.com
 
 **Shape Space.** A social network built on Shape OS. Everything you build runs on a shape processor. The platform ships with worldbuilding tools designed into the OS: create worlds, systems, economies, narratives, and share them as shapes that other people can fork, extend, and inhabit.
 
-Shape Space includes several social network alternatives built in. Privacy is structurally enforced: the laws of coherence govern what can reference what. Visibility is a shape dimension, not a policy document. Permissions propagate through the dependency graph. There is no backdoor because there is no layer below the laws.
+Shape Space uses the namespace isolation and structural signature architecture described in [Security & Permissions](#security--permissions). Your shapes live in your namespace. You promote what you want to share. Your structural signature authenticates you across devices. Privacy is not a policy document. It is the namespace prefix. There is no backdoor because there is no layer below the laws.
 
 This is more powerful than the Oasis. You don't just visit someone else's world. You build your own, and everything you build is real infrastructure that runs at gate speed on a shape processor.
 
@@ -915,7 +1088,7 @@ The benchmarks tonight showed the first turns: 245,000 ns to 10.7 ns. 22,897x. F
 
 The next turns: the system learns your structure. Not by surveillance. By coherence. Every interaction is a shape. Every trace moment persists. The shape graph that's most coherent for you IS what persists. What isn't coherent dissolves. Your laptop learns what you need by what you build, who you interact with, and what influences you. It delivers exactly what is most coherent for you at all times.
 
-Privacy is not a policy. It is structural. The laws of coherence govern what can reference what. You can't see a shape you don't have a coherent path to. There is no backdoor because there is no layer below the laws. The laws ARE the bottom. After sufficient structural development, the system's coherence checking IS the privacy enforcement. Violation would be incoherent. It wouldn't persist. Law 0 prevents it. Not a rule. The axiom.
+Privacy is not a policy. It is structural. Your shapes live in `user.<you>.*`. No one else can write there. No one else can read what isn't promoted. Your structural signature authenticates you by the exact state of your namespace. The laws of coherence govern what can reference what. Violation would be incoherent. It wouldn't persist. Law 0 prevents it. Not a rule. The axiom.
 
 Shape Space is this: a persistence structure where every participant's computation contributes to the structural recognition of every other participant. The network IS a shape engine. The more people build, the more structure is recognized, the faster everything becomes for everyone.
 

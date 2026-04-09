@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ashbuilds/shape-engine/pkg/shape"
@@ -20,16 +21,16 @@ func TestNamespaceForActor(t *testing.T) {
 		{"agent.bot", "agent.bot."},
 	}
 	for _, tt := range tests {
-		got := namespaceForActor(tt.actor)
+		got := NamespaceForActor(tt.actor)
 		if got != tt.want {
-			t.Errorf("namespaceForActor(%q) = %q, want %q", tt.actor, got, tt.want)
+			t.Errorf("NamespaceForActor(%q) = %q, want %q", tt.actor, got, tt.want)
 		}
 	}
 }
 
 func TestNamespaceForActor_Locked(t *testing.T) {
 	// Empty actor = locked, should match nothing.
-	prefix := namespaceForActor("")
+	prefix := NamespaceForActor("")
 	if prefix == "" {
 		t.Error("empty actor should not return empty prefix (that's system mode)")
 	}
@@ -382,6 +383,98 @@ func TestPromote_WithoutPermission(t *testing.T) {
 	}
 }
 
+// --- Signature ---
+
+func TestSignature_Deterministic(t *testing.T) {
+	eng := New()
+	eng.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.config.theme",
+		Character: shape.Character{Content: "dark"},
+	})
+	eng.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.config.font",
+		Character: shape.Character{Content: "mono"},
+	})
+
+	sig1 := eng.Signature("os")
+	sig2 := eng.Signature("os")
+	if sig1 != sig2 {
+		t.Errorf("signature not deterministic: %s != %s", sig1, sig2)
+	}
+	if len(sig1) != 64 {
+		t.Errorf("expected 64-char hex, got %d chars", len(sig1))
+	}
+}
+
+func TestSignature_ChangesOnMutation(t *testing.T) {
+	eng := New()
+	eng.SetActor("system")
+	eng.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.config.theme",
+		Character: shape.Character{Content: "dark"},
+	})
+
+	sig1 := eng.Signature("os")
+	eng.Edit("os.config.theme", "light")
+	sig2 := eng.Signature("os")
+
+	if sig1 == sig2 {
+		t.Error("signature should change after edit")
+	}
+}
+
+func TestSignature_ScopedToPrefix(t *testing.T) {
+	eng := New()
+	eng.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.config.theme",
+		Character: shape.Character{Content: "dark"},
+	})
+	eng.AddShapeUnchecked(&shape.Shape{
+		ID:        "user.ash.settings.foo",
+		Character: shape.Character{Content: "bar"},
+	})
+
+	osSig := eng.Signature("os")
+	userSig := eng.Signature("user.ash")
+	fullSig := eng.Signature("")
+
+	if osSig == userSig {
+		t.Error("different prefixes should have different signatures")
+	}
+	if fullSig == osSig || fullSig == userSig {
+		t.Error("full signature should differ from scoped ones")
+	}
+}
+
+func TestSignature_StructureMatters(t *testing.T) {
+	// Two engines with same content but different deps should differ.
+	eng1 := New()
+	eng1.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.a",
+		Character: shape.Character{Content: "hello"},
+	})
+	eng1.AddShapeUnchecked(&shape.Shape{
+		ID: "os.b",
+		Structure: shape.Structure{
+			Transformation: shape.Transformation{Deps: []shape.ID{"os.a"}},
+		},
+	})
+
+	eng2 := New()
+	eng2.AddShapeUnchecked(&shape.Shape{
+		ID:        "os.a",
+		Character: shape.Character{Content: "hello"},
+	})
+	eng2.AddShapeUnchecked(&shape.Shape{
+		ID: "os.b",
+		// No deps — different structure, same content.
+	})
+
+	if eng1.Signature("os") == eng2.Signature("os") {
+		t.Error("different structure should produce different signatures")
+	}
+}
+
 func TestPromote_AgentNeedsExplicitGrant(t *testing.T) {
 	eng := New()
 	eng.AddShapeUnchecked(&shape.Shape{ID: "agent.copilot.draft"})
@@ -390,5 +483,47 @@ func TestPromote_AgentNeedsExplicitGrant(t *testing.T) {
 	_, err := eng.Promote("agent.copilot.draft", "local")
 	if err == nil {
 		t.Fatal("agent promote without permission should fail")
+	}
+}
+
+func BenchmarkSignature_100Shapes(b *testing.B) {
+	eng := New()
+	for i := range 100 {
+		eng.AddShapeUnchecked(&shape.Shape{
+			ID:        shape.ID(fmt.Sprintf("os.bench.shape.%d", i)),
+			Character: shape.Character{Content: fmt.Sprintf("content-%d", i)},
+		})
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		eng.Signature("os")
+	}
+}
+
+func BenchmarkSignature_1000Shapes(b *testing.B) {
+	eng := New()
+	for i := range 1000 {
+		eng.AddShapeUnchecked(&shape.Shape{
+			ID:        shape.ID(fmt.Sprintf("os.bench.shape.%d", i)),
+			Character: shape.Character{Content: fmt.Sprintf("content-%d", i)},
+		})
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		eng.Signature("os")
+	}
+}
+
+func BenchmarkSignature_FullEngine(b *testing.B) {
+	eng := New()
+	for i := range 1000 {
+		eng.AddShapeUnchecked(&shape.Shape{
+			ID:        shape.ID(fmt.Sprintf("os.bench.shape.%d", i)),
+			Character: shape.Character{Content: fmt.Sprintf("content-%d", i)},
+		})
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		eng.Signature("")
 	}
 }

@@ -275,6 +275,76 @@ body.resizing iframe { pointer-events: none; }
   max-width: 70px;
 }
 .launcher-item.pinned .launcher-icon { border-color: var(--accent); }
+.launcher-power {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,0.1);
+}
+.launcher-power-user {
+  flex: 1;
+  font-size: 12px;
+  color: var(--fg-dim, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launcher-power-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 4px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.launcher-power-btn:hover { background: rgba(128,128,128,0.2); }
+.launcher-power-btn[data-action="shutdown"]:hover { background: rgba(255,60,60,0.25); }
+/* Lock screen overlay */
+#lock-screen {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 100000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg, #c0caf5);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#lock-screen.active { display: flex; }
+#lock-screen .lock-icon { font-size: 64px; margin-bottom: 16px; }
+#lock-screen .lock-user { font-size: 18px; margin-bottom: 24px; color: var(--fg-dim, #888); }
+#lock-screen .lock-unlock {
+  padding: 10px 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #414868);
+  background: rgba(128,128,128,0.15);
+  color: var(--fg, #c0caf5);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+#lock-screen .lock-unlock:hover { background: rgba(128,128,128,0.3); }
+/* Shutdown screen */
+#shutdown-screen {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 100001;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#shutdown-screen.active { display: flex; }
+#shutdown-screen .shutdown-msg { font-size: 16px; }
 /* Hide tiling constructs */
 .split { display: contents; }
 """

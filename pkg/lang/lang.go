@@ -198,6 +198,19 @@ type SetStmt struct {
 
 func (s *SetStmt) nodeType() string { return "set" }
 
+// DilateStmt is a time dilation prefix.
+//
+//	dilate <multiple> <stmt>
+//
+// Runs the inner statement with time dilated by the given factor.
+// N inner mutations share one outer tick.
+type DilateStmt struct {
+	Multiple Expr
+	Body     Node
+}
+
+func (d *DilateStmt) nodeType() string { return "dilate" }
+
 // ExprStmt wraps an expression as a statement (e.g. bare function call).
 type ExprStmt struct {
 	Expr Expr

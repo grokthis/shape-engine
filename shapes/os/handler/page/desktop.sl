@@ -222,7 +222,23 @@ for app_sh in sort_list(all_shapes) {
 }
 print("</div></div>")
 
+// Power section (lock, shutdown)
+let user = actor()
+print("<div class=\"launcher-power\">")
+if user != "" {
+  print("<span class=\"launcher-power-user\">" + user + "</span>")
+}
+print("<button class=\"launcher-power-btn\" data-action=\"lock\" title=\"Lock\">🔒</button>")
+print("<button class=\"launcher-power-btn\" data-action=\"shutdown\" title=\"Shut Down\">⏻</button>")
+print("</div>")
+
 print("</div></div></div>")
+
+// Lock screen overlay
+let lock_user = actor()
+if lock_user == "" { set lock_user = "User" }
+print("<div id=\"lock-screen\"><div class=\"lock-icon\">🔒</div><div class=\"lock-user\">" + lock_user + "</div><button class=\"lock-unlock\">Unlock</button></div>")
+print("<div id=\"shutdown-screen\"><div class=\"shutdown-msg\">Shape OS has shut down.</div></div>")
 
 print("<script>")
 if engine_client_js != "" {

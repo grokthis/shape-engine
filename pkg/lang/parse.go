@@ -417,6 +417,8 @@ func (p *parser) topLevel() (Node, error) {
 		return p.parseBlock()
 	case "use":
 		return p.parseUse()
+	case "dilate":
+		return p.parseDilate()
 	default:
 		// Expression statement.
 		if t.typ == tokIdent || t.typ == tokString {
@@ -672,6 +674,8 @@ func (p *parser) parseBodyStmt() (Node, error) {
 		return p.parseSet()
 	case "edit":
 		return p.parseEdit()
+	case "dilate":
+		return p.parseDilate()
 	default:
 		if t.typ == tokNewline {
 			p.next()
@@ -888,6 +892,27 @@ func (p *parser) parseUse() (*UseStmt, error) {
 	}
 
 	return &UseStmt{Path: path.val}, nil
+}
+
+func (p *parser) parseDilate() (*DilateStmt, error) {
+	p.next() // consume "dilate"
+
+	multiple, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	// The body is the next statement (any top-level or body statement).
+	p.skipNewlines()
+	body, err := p.topLevel()
+	if err != nil {
+		return nil, err
+	}
+	if body == nil {
+		return nil, fmt.Errorf("dilate requires a statement after the multiple")
+	}
+
+	return &DilateStmt{Multiple: multiple, Body: body}, nil
 }
 
 func (p *parser) parseExprStmt() (*ExprStmt, error) {
