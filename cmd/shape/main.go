@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -95,6 +96,12 @@ func (h *eventHub) broadcast(evt map[string]interface{}) {
 			}
 		}(c)
 	}
+}
+
+func init() {
+	// macOS requires all Cocoa/AppKit calls on the main thread.
+	// LockOSThread in init() ensures main() runs on thread 0.
+	runtime.LockOSThread()
 }
 
 func main() {
