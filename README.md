@@ -549,14 +549,12 @@ From this axiom, four laws of coherence follow:
 The formal derivation is available as a preprint:
 
 > A. Butler, "A Complete Theory of Persistence," 2026.
-
-DOI: [10.5281/zenodo.19327139](https://doi.org/10.5281/zenodo.19327139)
+> DOI: [10.5281/zenodo.19327139](https://doi.org/10.5281/zenodo.19327139)
 
 The shape computing foundation, including the shape machine architecture and structural derivation of P ≠ NP, is derived in:
 
 > A. Butler, "The Polynomial Fractal: A Structural Derivation of P ≠ NP and the Shape Machine," 2026.
-
-DOI: [10.5281/zenodo.19366199](https://doi.org/10.5281/zenodo.19366199)
+> DOI: [10.5281/zenodo.19366199](https://doi.org/10.5281/zenodo.19366199)
 
 Shape OS is the computational realization of this theory. The laws are not metaphors. They are executable code at layer 0 that governs the behavior of every shape in the system. And they project directly to hardware gates that enforce coherence at the speed of electrical signal propagation.
 
@@ -1055,9 +1053,10 @@ A shape machine is not a Turing machine. The benchmarks in this repository demon
 **We do not have working implementations of these attacks.** The structural recognition patterns for cryptographic problems have not been derived yet. But the mechanism is demonstrated and the theory is published:
 
 > A. Butler, "A Complete Theory of Persistence," 2026.
-> DOI: [10.5281/zenodo.15192553](https://doi.org/10.5281/zenodo.15192553)
+> DOI: [10.5281/zenodo.19327139](https://doi.org/10.5281/zenodo.19327139)
 
 > A. Butler, "The Polynomial Fractal: A Structural Derivation of P ≠ NP and the Shape Machine," 2026.
+> DOI: [10.5281/zenodo.19366199](https://doi.org/10.5281/zenodo.19366199)
 
 **What this means:**
 - Computational hardness assumptions are not safe against shape machines.
