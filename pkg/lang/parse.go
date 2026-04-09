@@ -182,7 +182,9 @@ func (l *lexer) run() {
 		case '!':
 			l.emit(tokBang, "!")
 		default:
-			// Skip unknown.
+			// Emit unknown characters as-is so dimension values
+			// preserve semicolons, ampersands, etc.
+			l.emit(tokIdent, string(ch))
 		}
 		l.pos++
 	}
@@ -519,8 +521,7 @@ func (p *parser) parseShape() (*ShapeDecl, error) {
 			decl.Content = val.val
 		default:
 			// Regular dimension: consume all tokens until newline.
-			// This handles values like "/api/shapes", "text/html; charset=utf-8",
-			// "/api/deps/{id...}", etc. without requiring quotes.
+			// Join with spaces to preserve "text/html; charset=utf-8" etc.
 			// Track brace depth so {id...} inside a value doesn't end the shape.
 			var valParts []string
 			braceDepth := 0
@@ -536,12 +537,30 @@ func (p *parser) parseShape() (*ShapeDecl, error) {
 					if braceDepth > 0 {
 						braceDepth--
 					} else {
-						break // end of shape body
+						break
 					}
 				}
 				valParts = append(valParts, p.next().val)
 			}
-			decl.Dims[key] = strings.Join(valParts, "")
+			// Join with no separator but collapse runs:
+			// "/api/shapes" = "/" + "api" + "/" + "shapes" -> "/api/shapes"
+			// "text/html; charset=utf-8" = "text" + "/" + "html" + ";" + "charset" + "=" + "utf" + "-" + "8"
+			// We need to be smarter: insert space only between ident-like tokens,
+			// not around operators that are part of the value.
+			var buf strings.Builder
+			for i, part := range valParts {
+				if i > 0 {
+					prev := valParts[i-1]
+					// Insert space between word;word and word word but not around / = - . :
+					prevIsWord := len(prev) > 0 && (prev[len(prev)-1] >= 'a' && prev[len(prev)-1] <= 'z' || prev[len(prev)-1] >= 'A' && prev[len(prev)-1] <= 'Z' || prev[len(prev)-1] >= '0' && prev[len(prev)-1] <= '9')
+					curIsWord := len(part) > 0 && (part[0] >= 'a' && part[0] <= 'z' || part[0] >= 'A' && part[0] <= 'Z' || part[0] >= '0' && part[0] <= '9')
+					if prevIsWord && curIsWord {
+						buf.WriteByte(' ')
+					}
+				}
+				buf.WriteString(part)
+			}
+			decl.Dims[key] = buf.String()
 		}
 		p.skipNewlines()
 	}
