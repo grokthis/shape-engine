@@ -203,7 +203,16 @@ shape os.wm.floating.script : os.wm.floating {
   // --- Window buttons ---
   function bindWindowEvents(win) {
     win.addEventListener('mousedown', function(e) {
-      if (!e.target.closest('.resize-handle')) focusWindow(win);
+      if (e.target.closest('.resize-handle')) return;
+      // Bring window to front but don't steal focus from inputs.
+      var tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) {
+        // Just bring to front without disrupting focus.
+        document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
+        win.classList.add('focused');
+        return;
+      }
+      focusWindow(win);
     });
     var titlebar = win.querySelector('.window-title');
     if (titlebar) titlebar.addEventListener('mousedown', onTitleMousedown);
