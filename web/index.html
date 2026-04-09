@@ -433,8 +433,21 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; c
     const html = handleRequest('GET', '/desktop');
 
     if (html) {
-      // Insert the rendered desktop into #os-root
+      // Insert the rendered desktop into #os-root.
+      // innerHTML doesn't execute <script> tags, so we extract
+      // them and eval after insertion.
       osRoot.innerHTML = html;
+
+      // Execute all inline scripts from the rendered HTML
+      osRoot.querySelectorAll('script').forEach(oldScript => {
+        const newScript = document.createElement('script');
+        if (oldScript.src) {
+          newScript.src = oldScript.src;
+        } else {
+          newScript.textContent = oldScript.textContent;
+        }
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
 
       // Wire terminal inputs
       osRoot.querySelectorAll('input[type="text"]').forEach(input => {
