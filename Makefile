@@ -8,7 +8,7 @@
 BIN_DIR := bin
 SHAPE_BIN := $(BIN_DIR)/shape
 
-.PHONY: all test test-v build wasm hw-test clean
+.PHONY: all test test-v build wasm web hw-test deploy clean
 
 all: test build
 
@@ -31,6 +31,16 @@ wasm:
 	@echo "==> Building WASM..."
 	@GOOS=js GOARCH=wasm go build -o web/shape.wasm ./cmd/shape-wasm
 	@echo "==> web/shape.wasm ($(shell ls -lh web/shape.wasm | awk '{print $$5}'))"
+
+web: web/shapes.json
+	@echo "==> Web assets ready ($(shell python3 -c "import json;print(len(json.load(open('web/shapes.json'))))" 2>/dev/null) shapes)."
+
+web/shapes.json: $(shell find shapes -name '*.sl' 2>/dev/null)
+	@echo "==> Building shapes.json..."
+	@python3 web/build-shapes-json.py
+
+deploy: web
+	@echo "==> Deploy ready. Push main branch to update GitHub Pages."
 
 hw-test:
 	@echo "==> Running hardware tests..."

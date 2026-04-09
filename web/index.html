@@ -90,6 +90,48 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; c
     } catch(e) { return 'error: ' + e.message + '\n'; }
   }
 
+  // --- Route handling: render pages through shape handlers ---
+
+  function handleRequest(method, path) {
+    let bestRoute = null, bestLen = 0;
+    for (const s of engine.allShapes()) {
+      if (s.character.dimensions.type !== 'route') continue;
+      const rm = s.character.dimensions.method;
+      if (rm && rm.toUpperCase() !== method) continue;
+      const rp = s.character.dimensions.path;
+      if (rp === path) { bestRoute = s; break; }
+      if (matchPath(rp, path) && rp.split('/').length > bestLen) { bestRoute = s; bestLen = rp.split('/').length; }
+    }
+    if (!bestRoute) return '';
+    const handler = engine.getShape(bestRoute.character.dimensions.handler);
+    if (!handler) return '';
+    const pathParts = path.split('/').filter(p => p);
+    const patternParts = (bestRoute.character.dimensions.path || '').split('/').filter(p => p);
+    const scope = { ...bestRoute.character.dimensions, method, path, path_path: '' };
+    for (let i = 0; i < patternParts.length; i++) {
+      if (patternParts[i].startsWith('{') && patternParts[i].endsWith('...}')) {
+        scope.path_path = pathParts.slice(i).join('/');
+        break;
+      }
+      if (patternParts[i].startsWith('{') && patternParts[i].endsWith('}')) {
+        const key = 'path_' + patternParts[i].slice(1, -1);
+        scope[key] = pathParts[i] || '';
+      }
+    }
+    return renderShape(handler.id, scope);
+  }
+
+  function matchPath(pattern, path) {
+    if (!pattern) return false;
+    const pp = pattern.split('/'), tp = path.split('/');
+    for (let i = 0; i < pp.length; i++) {
+      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) return i < tp.length;
+      if (i >= tp.length) return false;
+      if (!pp[i].startsWith('{') && pp[i] !== tp[i]) return false;
+    }
+    return pp.length === tp.length;
+  }
+
   // --- Structural render: shapes -> DOM ---
   // No document.write. No innerHTML. No iframes.
   // The engine renders into #os-root by building DOM nodes
@@ -385,22 +427,56 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; c
     `;
     document.head.appendChild(renderCss);
 
-    // Render the benchmark page structurally from shapes
-    if (engine.hasShape('os.render.benchmark')) {
-      renderShapeToDOM('os.render.benchmark', osRoot);
+    // Render the desktop via the route handler.
+    // The handler at os.handler.page.desktop renders the full
+    // desktop HTML from shapes: statusbar, workspaces, windows, apps.
+    const html = handleRequest('GET', '/desktop');
+
+    if (html) {
+      // Insert the rendered desktop into #os-root
+      osRoot.innerHTML = html;
+
+      // Wire terminal inputs
+      osRoot.querySelectorAll('input[type="text"]').forEach(input => {
+        const output = input.closest('.window, .app, div')?.querySelector('#output, .output, [id$="-output"]')
+          || input.previousElementSibling;
+        if (!output) return;
+        input.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          const line = input.value; input.value = '';
+          const cmdEl = document.createElement('div');
+          cmdEl.textContent = 'shape$ ' + line; cmdEl.style.color = '#888';
+          output.appendChild(cmdEl);
+          const result = execShell(line);
+          if (result) {
+            const el = document.createElement('div');
+            el.style.whiteSpace = 'pre-wrap';
+            el.textContent = result;
+            output.appendChild(el);
+          }
+          output.scrollTop = output.scrollHeight;
+        });
+      });
+
+      // Wire window focus
+      osRoot.querySelectorAll('.window').forEach(win => {
+        win.addEventListener('mousedown', () => {
+          osRoot.querySelectorAll('.window').forEach(w => w.classList.remove('focused'));
+          win.classList.add('focused');
+        });
+      });
+
+      // Focus first terminal input
+      const firstInput = osRoot.querySelector('input[type="text"]');
+      if (firstInput) firstInput.focus();
     } else {
-      // Fallback: render the desktop
-      const termEl = document.createElement('div');
-      termEl.style.cssText = 'padding:24px;font-family:monospace;';
-      const output = document.createElement('div');
-      output.id = 'output';
-      termEl.appendChild(output);
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.style.cssText = 'width:100%;background:#111;border:1px solid #333;color:#e0e0e0;padding:8px;font:14px monospace;outline:none;';
-      input.placeholder = 'shape> ';
-      termEl.appendChild(input);
-      osRoot.appendChild(termEl);
+      // No desktop route: show bare terminal
+      osRoot.innerHTML = '<div style="padding:24px;font-family:monospace;">'
+        + '<div id="output"></div>'
+        + '<input type="text" style="width:100%;background:#111;border:1px solid #333;color:#e0e0e0;padding:8px;font:14px monospace;outline:none;" placeholder="shape> ">'
+        + '</div>';
+      const input = osRoot.querySelector('input');
+      const output = osRoot.querySelector('#output');
       input.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         const line = input.value; input.value = '';
@@ -414,7 +490,19 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; c
       input.focus();
     }
 
-    window.shapeEngine = { engine, execShell, renderShape };
+    // Override fetch so in-page JS routes through the engine
+    const originalFetch = window.fetch;
+    window.fetch = async function(url, options = {}) {
+      let urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('/')) {
+        const method = (options.method || 'GET').toUpperCase();
+        const body = handleRequest(method, urlStr);
+        return new Response(body || '', { status: body ? 200 : 404, headers: { 'Content-Type': 'text/html' } });
+      }
+      return originalFetch.call(window, url, options);
+    };
+
+    window.shapeEngine = { engine, execShell, renderShape, handleRequest };
   }, 500);
 })();
 </script>
