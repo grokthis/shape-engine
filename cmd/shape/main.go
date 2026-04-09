@@ -107,6 +107,7 @@ func init() {
 func main() {
 	web := flag.Bool("web", false, "HTTP server only, no native window")
 	shellMode := flag.Bool("shell", false, "interactive shell, no window")
+	debugMode := flag.Bool("debug", false, "print every operation to stderr")
 	addr := flag.String("addr", ":0", "listen address (default: random port)")
 	flag.Parse()
 
@@ -118,6 +119,7 @@ func main() {
 
 	// Boot engine.
 	eng := engine.New()
+	eng.Debug = *debugMode
 
 	// Register agent transform: shapes with fn=agent.exec fire their
 	// content as shape-lang when a dependency changes.

@@ -61,6 +61,11 @@ type Engine struct {
 	// ext holds extension objects (LLM client, etc.) without import coupling.
 	// Keys are package paths, values are typed by the caller.
 	ext map[string]interface{}
+
+	// Debug is a process-level flag. When set, every builtin operation
+	// prints its inputs and outputs to stderr. Accessible from shape-lang
+	// via the debug() builtin.
+	Debug bool
 }
 
 // New creates a new engine with an empty structure.

@@ -1116,7 +1116,11 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) < 1 {
 			return nilVal(), fmt.Errorf("content: need 1 arg")
 		}
-		s, ok := ev.eng.GetShape(shape.ID(args[0].String()))
+		id := args[0].String()
+		s, ok := ev.eng.GetShape(shape.ID(id))
+		if ev.eng.Debug {
+			ev.out.WriteString(fmt.Sprintf("[call] content(%q) -> found=%v\n", id, ok))
+		}
 		if !ok {
 			return strVal(""), nil
 		}
@@ -1126,11 +1130,19 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) < 2 {
 			return nilVal(), fmt.Errorf("dim: need 2 args (id, key)")
 		}
-		s, ok := ev.eng.GetShape(shape.ID(args[0].String()))
+		id, key := args[0].String(), args[1].String()
+		s, ok := ev.eng.GetShape(shape.ID(id))
+		if ev.eng.Debug {
+			val := ""
+			if ok {
+				val = s.Character.Dimensions[key]
+			}
+			ev.out.WriteString(fmt.Sprintf("[call] dim(%q, %q) -> %q\n", id, key, val))
+		}
 		if !ok {
 			return strVal(""), nil
 		}
-		return strVal(s.Character.Dimensions[args[1].String()]), nil
+		return strVal(s.Character.Dimensions[key]), nil
 
 	case "dims":
 		if len(args) < 1 {
@@ -1263,7 +1275,11 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) < 1 {
 			return boolVal(false), nil
 		}
-		_, ok := ev.eng.GetShape(shape.ID(args[0].String()))
+		id := args[0].String()
+		_, ok := ev.eng.GetShape(shape.ID(id))
+		if ev.eng.Debug {
+			ev.out.WriteString(fmt.Sprintf("[call] exists(%q) -> %v\n", id, ok))
+		}
 		return boolVal(ok), nil
 
 	case "children":
@@ -1290,12 +1306,23 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			return nilVal(), fmt.Errorf("shapes_under: need 1 arg")
 		}
 		prefix := args[0].String()
+		allShapes := ev.eng.Shapes()
+		cleanPrefix := prefix
+		for len(cleanPrefix) > 0 && cleanPrefix[len(cleanPrefix)-1] == '.' {
+			cleanPrefix = cleanPrefix[:len(cleanPrefix)-1]
+		}
+		if ev.eng.Debug {
+			ev.out.WriteString(fmt.Sprintf("[call] shapes_under(%q) clean=%q total=%d\n", prefix, cleanPrefix, len(allShapes)))
+		}
 		var ids []value
-		for _, s := range ev.eng.Shapes() {
+		for _, s := range allShapes {
 			id := string(s.ID)
-			if prefix == "" || id == prefix || text.HasPrefix(id, prefix+".") {
+			if cleanPrefix == "" || id == cleanPrefix || text.HasPrefix(id, cleanPrefix+".") {
 				ids = append(ids, strVal(id))
 			}
+		}
+		if ev.eng.Debug {
+			ev.out.WriteString(fmt.Sprintf("[result] shapes_under(%q) -> %d matches\n", prefix, len(ids)))
 		}
 		return listVal(ids), nil
 
@@ -2199,6 +2226,10 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			return intVal(0), nil
 		}
 		return intVal(int(s.Tick)), nil
+
+	case "debug":
+		// debug() — returns true if --debug flag is set.
+		return boolVal(ev.eng.Debug), nil
 
 	case "global_tick":
 		// global_tick() — return current global tick.
