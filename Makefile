@@ -40,7 +40,10 @@ web/shapes.json: $(shell find shapes -name '*.sl' 2>/dev/null)
 	@python3 web/build-shapes-json.py
 
 deploy: web
-	@echo "==> Deploy ready. Push main branch to update GitHub Pages."
+	@echo "==> Copying to docs/ for GitHub Pages..."
+	@cp web/index.html web/shape-engine.js web/shapes.json docs/
+	@cp web/wasm_exec.js docs/ 2>/dev/null || true
+	@echo "==> Deploy ready. Commit and push main branch."
 
 hw-test:
 	@echo "==> Running hardware tests..."
