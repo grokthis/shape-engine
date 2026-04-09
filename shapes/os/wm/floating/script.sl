@@ -202,14 +202,21 @@ shape os.wm.floating.script : os.wm.floating {
 
   // --- Window buttons ---
   function bindWindowEvents(win) {
+    // Bring window to front on any click.
+    // Use setTimeout(0) for DOM class changes so they don't
+    // interfere with the browser's native focus handling.
+    // The input gets focus first, then we raise the window.
     win.addEventListener('mousedown', function(e) {
       if (e.target.closest('.resize-handle')) return;
-      // Bring window to front but don't steal focus from inputs.
-      var tag = e.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) {
-        // Just bring to front without disrupting focus.
-        document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
-        win.classList.add('focused');
+      var clickedInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable;
+      if (clickedInput) {
+        // Defer window raising so the input gets focus first.
+        setTimeout(function() {
+          document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
+          win.classList.add('focused');
+          win.style.zIndex = ++zIndex;
+          updateTaskbar();
+        }, 0);
         return;
       }
       focusWindow(win);
