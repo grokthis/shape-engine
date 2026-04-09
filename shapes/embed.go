@@ -10,5 +10,5 @@ package shapes
 
 import "embed"
 
-//go:embed all:_preamble.sl app.sl app engine.sl engine hardware.sl hardware law.sl law lib.sl lib os.sl os shape.sl shape user.sl world.sl world
+//go:embed all:_preamble.sl app.sl app engine.sl engine hardware.sl hardware law.sl law lib.sl lib os.sl os shape.sl shape theory.sl theory user.sl world.sl world
 var FS embed.FS

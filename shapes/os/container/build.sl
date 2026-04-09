@@ -10,7 +10,7 @@ shape os.container.build : os.container {
 //
 //   shape my-image {
 //     type: containerfile
-//     """
+//     (triple-quoted shape-lang)
 //     from shape-engine              // base stack
 //
 //     env APP_ENV "production"       // set environment
@@ -26,7 +26,7 @@ shape os.container.build : os.container {
 //     run "shape-lang setup.sl"      // run build command
 //
 //     entrypoint "app/server.sl"     // default program
-//     """
+//     (triple-quoted shape-lang)
 //   }
 //
 // Unlike Dockerfile:

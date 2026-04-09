@@ -20,7 +20,7 @@ shape os.container.compose : os.container, os.container.network, os.container.vo
 //
 //   shape my-project.compose {
 //     type: compose
-//     """
+//     (triple-quoted shape-lang)
 //     // Services
 //     service "web" {
 //       stack: "riscv64,shape-engine"
@@ -61,7 +61,7 @@ shape os.container.compose : os.container, os.container.network, os.container.vo
 //
 //     // Volumes
 //     volume "db-data" {}
-//     """
+//     (triple-quoted shape-lang)
 //   }
 //
 // What compose up does:

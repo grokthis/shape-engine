@@ -1358,20 +1358,50 @@ func bootOS(eng *engine.Engine) {
 		return files[i].path < files[j].path
 	})
 
+	var parseErrors, evalErrors int
 	for _, f := range files {
 		prog, err := lang.Parse(f.data)
 		if err != nil {
-			log.Printf("%s: parse error: %v", f.path, err)
+			parseErrors++
+			// Create error shape
+			errID := shape.ID("error.parse." + strings.ReplaceAll(f.path, "/", "."))
+			errShape := &shape.Shape{ID: errID}
+			errShape.Character.Dimensions = map[string]string{
+				"type":    "error",
+				"phase":   "parse",
+				"source":  f.path,
+				"message": err.Error(),
+			}
+			errShape.Character.Content = fmt.Sprintf("[parse] %s: %v", f.path, err)
+			errShape.Structure.Emergence.Layer = 0
+			eng.AddShape(errShape)
+			fmt.Fprintf(os.Stderr, "[parse] %s: %v\n", f.path, err)
 			continue
 		}
 		out, err := lang.Eval(prog, eng, "")
 		if err != nil {
-			log.Printf("%s: eval error: %v", f.path, err)
+			evalErrors++
+			errID := shape.ID("error.eval." + strings.ReplaceAll(f.path, "/", "."))
+			errShape := &shape.Shape{ID: errID}
+			errShape.Character.Dimensions = map[string]string{
+				"type":    "error",
+				"phase":   "eval",
+				"source":  f.path,
+				"message": err.Error(),
+			}
+			errShape.Character.Content = fmt.Sprintf("[eval] %s: %v", f.path, err)
+			errShape.Structure.Emergence.Layer = 0
+			eng.AddShape(errShape)
+			fmt.Fprintf(os.Stderr, "[eval] %s: %v\n", f.path, err)
 			continue
 		}
 		if out != "" {
 			fmt.Print(out)
 		}
 	}
-	fmt.Printf("%d shapes loaded from shapes/\n", len(eng.Shapes()))
+	loaded := len(eng.Shapes())
+	if parseErrors > 0 || evalErrors > 0 {
+		fmt.Fprintf(os.Stderr, "%d shapes loaded, %d parse errors, %d eval errors\n", loaded, parseErrors, evalErrors)
+	}
+	fmt.Printf("%d shapes loaded from shapes/\n", loaded)
 }

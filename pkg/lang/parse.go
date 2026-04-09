@@ -518,9 +518,30 @@ func (p *parser) parseShape() (*ShapeDecl, error) {
 			}
 			decl.Content = val.val
 		default:
-			// Regular dimension.
-			val := p.next()
-			decl.Dims[key] = val.val
+			// Regular dimension: consume all tokens until newline.
+			// This handles values like "/api/shapes", "text/html; charset=utf-8",
+			// "/api/deps/{id...}", etc. without requiring quotes.
+			// Track brace depth so {id...} inside a value doesn't end the shape.
+			var valParts []string
+			braceDepth := 0
+			for !p.atEnd() {
+				tk := p.peek()
+				if tk.typ == tokNewline && braceDepth == 0 {
+					break
+				}
+				if tk.typ == tokLBrace {
+					braceDepth++
+				}
+				if tk.typ == tokRBrace {
+					if braceDepth > 0 {
+						braceDepth--
+					} else {
+						break // end of shape body
+					}
+				}
+				valParts = append(valParts, p.next().val)
+			}
+			decl.Dims[key] = strings.Join(valParts, "")
 		}
 		p.skipNewlines()
 	}
