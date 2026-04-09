@@ -194,8 +194,13 @@ func main() {
 			}
 			win.Character.Dimensions = map[string]string{"type": "window", "app": appName, "focused": focused}
 			win.Structure.Emergence.Layer = 5
-			win.Structure.Transformation.Deps = []shape.ID{"os.desktop.workspace.1"}
 			eng.AddShape(win)
+			// The desktop handler reads workspace deps to find windows.
+			// So the workspace must depend on the window, not vice versa.
+			ws1, _ := eng.GetShape("os.desktop.workspace.1")
+			if ws1 != nil {
+				ws1.Structure.Transformation.Deps = append(ws1.Structure.Transformation.Deps, winID)
+			}
 		}
 	}
 
