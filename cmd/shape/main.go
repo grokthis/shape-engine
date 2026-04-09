@@ -1402,9 +1402,11 @@ func bootOS(eng *engine.Engine) {
 			fmt.Fprintf(os.Stderr, "[eval] %s: %v\n", f.path, err)
 			continue
 		}
-		if out != "" {
-			fmt.Print(out)
-		}
+		// Suppress output during boot. Shapes are loaded for their
+		// declarations, not their print output. Handler shapes (desktop,
+		// docs, etc.) produce HTML when evaluated - this should not go
+		// to stdout during boot.
+		_ = out
 	}
 	loaded := len(eng.Shapes())
 	if parseErrors > 0 || evalErrors > 0 {
