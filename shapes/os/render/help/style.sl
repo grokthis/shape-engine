@@ -2,15 +2,11 @@ shape os.render.help.style {
   type: style
   layer: 4
   """
-body {
-  background: var(--bg, #1a1b26);
-  color: var(--fg, #c0caf5);
+#help-content {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
-  margin: 0;
-  padding: 0;
-}
-#help-content {
+  background: var(--bg, #1a1b26);
+  color: var(--fg, #c0caf5);
   padding: 16px 20px;
 }
 #help-content h2 {

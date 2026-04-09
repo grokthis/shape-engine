@@ -2,15 +2,11 @@ shape os.render.sheet.style {
   type: style
   layer: 4
   """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body {
-  height: 100%;
+#sheet {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 13px;
   background: var(--bg, #1a1b26);
   color: var(--fg, #c0caf5);
-}
-#sheet {
   display: flex;
   flex-direction: column;
   height: 100vh;

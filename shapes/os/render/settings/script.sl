@@ -1,11 +1,59 @@
 shape os.render.settings.script {
   type: script
   layer: 4
+  deps: os.render.settings.body
   """
 (function() {
-  var root = document.getElementById('settings');
+  var root = document.getElementById('settings-root');
+  if (!root) return;
+
   var themes = {};
   var currentConfig = {};
+
+  // --- DOM helpers ---
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function settingRow(label, desc) {
+    var row = el('div', 'setting-row');
+    var info = el('div', 'setting-info');
+    info.appendChild(el('div', 'setting-label', label));
+    info.appendChild(el('div', 'setting-desc', desc));
+    var value = el('div', 'setting-value');
+    row.appendChild(info);
+    row.appendChild(value);
+    return { row: row, value: value };
+  }
+
+  function statusSpan(id) {
+    var s = el('span', 'status', 'saved');
+    s.id = id;
+    return s;
+  }
+
+  function sectionTitle(text) {
+    return el('h2', 'settings-section-title', text);
+  }
+
+  // --- Data ---
+
+  function saveConfig(id, value) {
+    return fetch('/shape', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id: id, character: { dimensions: { type: 'config' }, content: value } })
+    });
+  }
+
+  function flashStatus(el) {
+    el.classList.add('show');
+    setTimeout(function() { el.classList.remove('show'); }, 1500);
+  }
 
   fetch('/shapes').then(function(r) { return r.json(); }).then(function(shapes) {
     shapes.forEach(function(s) {
@@ -15,12 +63,9 @@ shape os.render.settings.script {
         var c = s.character ? s.character.content : '';
         if (c) {
           var m;
-          m = c.match(/--bg:\s*([^;]+)/);
-          if (m) bg = m[1].trim();
-          m = c.match(/--fg:\s*([^;]+)/);
-          if (m) fg = m[1].trim();
-          m = c.match(/--accent:\s*([^;]+)/);
-          if (m) accent = m[1].trim();
+          m = c.match(/--bg:\s*([^;]+)/); if (m) bg = m[1].trim();
+          m = c.match(/--fg:\s*([^;]+)/); if (m) fg = m[1].trim();
+          m = c.match(/--accent:\s*([^;]+)/); if (m) accent = m[1].trim();
         }
         themes[name] = { id: s.id, bg: bg, fg: fg, accent: accent };
       }
@@ -31,157 +76,178 @@ shape os.render.settings.script {
     render();
   });
 
-  function saveConfig(id, value) {
-    return fetch('/shape', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        id: id,
-        character: {
-          dimensions: {type: 'config'},
-          content: value
-        }
-      })
-    });
-  }
-
-  function flashStatus(el) {
-    el.classList.add('show');
-    setTimeout(function() { el.classList.remove('show'); }, 1500);
-  }
+  // --- Render ---
 
   function render() {
+    while (root.firstChild) root.removeChild(root.firstChild);
+
     var activeTheme = currentConfig['os.config.desktop.theme'] || '';
-    var activeWM = currentConfig['os.config.desktop.wm'] || '';
-    var background = currentConfig['os.config.desktop.background'] || '';
-    var headers = currentConfig['os.config.headers'] || 'on';
-    var shellHome = currentConfig['os.config.shell.home'] || 'user';
-
-    var html = '<h1>Settings</h1>';
-
-    html += '<h2>Theme</h2>';
-    html += '<div class="theme-grid">';
-    var themeNames = Object.keys(themes).sort();
-    themeNames.forEach(function(name) {
-      var t = themes[name];
-      var isActive = activeTheme === t.id ? ' active' : '';
-      html += '<div class="theme-card' + isActive + '" data-theme="' + t.id + '">';
-      html += '<div class="theme-preview" style="background: linear-gradient(135deg, ' + t.bg + ' 0%, ' + t.accent + ' 100%)"></div>';
-      html += name;
-      html += '</div>';
-    });
-    html += '</div>';
-
-    html += '<h2>Window Manager</h2>';
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Window Manager</div><div class="setting-desc">How windows are arranged</div></div>';
-    html += '<div class="setting-value"><select id="wm-select">';
-    html += '<option value="os.wm.floating"' + (activeWM === 'os.wm.floating' ? ' selected' : '') + '>Floating</option>';
-    html += '<option value="os.wm.tiling"' + (activeWM === 'os.wm.tiling' ? ' selected' : '') + '>Tiling</option>';
-    html += '</select><span class="status" id="wm-status">saved</span></div>';
-    html += '</div>';
-
-    html += '<h2>Desktop</h2>';
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Background</div><div class="setting-desc">CSS value (color, gradient, or url())</div></div>';
-    html += '<div class="setting-value"><input type="text" id="bg-input" value="' + background.replace(/"/g, '&quot;') + '" style="min-width:240px">';
-    html += '<span class="status" id="bg-status">saved</span></div>';
-    html += '</div>';
-
-    html += '<h2>Shell</h2>';
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Home directory</div><div class="setting-desc">Default prefix on login</div></div>';
-    html += '<div class="setting-value"><input type="text" id="home-input" value="' + shellHome + '">';
-    html += '<span class="status" id="home-status">saved</span></div>';
-    html += '</div>';
-
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Column headers</div><div class="setting-desc">Show headers in command output tables</div></div>';
-    html += '<div class="setting-value"><select id="headers-select">';
-    html += '<option value="on"' + (headers === 'on' ? ' selected' : '') + '>On</option>';
-    html += '<option value="off"' + (headers === 'off' ? ' selected' : '') + '>Off</option>';
-    html += '</select><span class="status" id="headers-status">saved</span></div>';
-    html += '</div>';
-
-    // LLM Agent section.
-    var llmKey = currentConfig['os.config.llm.api_key'] || '';
-    var llmModel = currentConfig['os.config.llm.model'] || 'claude-sonnet-4-20250514';
-    var llmProvider = currentConfig['os.config.llm.provider'] || 'anthropic';
+    var activeWM    = currentConfig['os.config.desktop.wm'] || '';
+    var background  = currentConfig['os.config.desktop.background'] || '';
+    var headers     = currentConfig['os.config.headers'] || 'on';
+    var shellHome   = currentConfig['os.config.shell.home'] || 'user';
+    var llmKey      = currentConfig['os.config.llm.api_key'] || '';
+    var llmModel    = currentConfig['os.config.llm.model'] || 'claude-sonnet-4-20250514';
     var llmMaxTokens = currentConfig['os.config.llm.max_tokens'] || '4096';
 
-    html += '<h2>LLM Agent</h2>';
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">API Key</div><div class="setting-desc">Anthropic API key (or set ANTHROPIC_API_KEY env var)</div></div>';
-    html += '<div class="setting-value"><input type="password" id="llm-key-input" value="' + llmKey.replace(/"/g, '&quot;') + '" placeholder="sk-ant-..." style="min-width:240px">';
-    html += '<span class="status" id="llm-key-status">saved</span></div>';
-    html += '</div>';
+    root.appendChild(el('h1', 'settings-title', 'Settings'));
 
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Model</div><div class="setting-desc">LLM model identifier</div></div>';
-    html += '<div class="setting-value"><input type="text" id="llm-model-input" value="' + llmModel + '" style="min-width:240px">';
-    html += '<span class="status" id="llm-model-status">saved</span></div>';
-    html += '</div>';
-
-    html += '<div class="setting-row">';
-    html += '<div><div class="setting-label">Max tokens</div><div class="setting-desc">Maximum response tokens per step</div></div>';
-    html += '<div class="setting-value"><input type="text" id="llm-tokens-input" value="' + llmMaxTokens + '" style="min-width:100px">';
-    html += '<span class="status" id="llm-tokens-status">saved</span></div>';
-    html += '</div>';
-
-    root.innerHTML = html;
-
-    root.querySelectorAll('.theme-card').forEach(function(card) {
+    // --- Theme ---
+    root.appendChild(sectionTitle('Theme'));
+    var grid = el('div', 'theme-grid');
+    Object.keys(themes).sort().forEach(function(name) {
+      var t = themes[name];
+      var card = el('div', 'theme-card' + (activeTheme === t.id ? ' active' : ''));
+      card.dataset.theme = t.id;
+      var preview = el('div', 'theme-preview');
+      preview.style.background = 'linear-gradient(135deg, ' + t.bg + ' 0%, ' + t.accent + ' 100%)';
+      card.appendChild(preview);
+      card.appendChild(document.createTextNode(name));
       card.addEventListener('click', function() {
-        var themeId = this.dataset.theme;
-        saveConfig('os.config.desktop.theme', themeId).then(function() {
-          currentConfig['os.config.desktop.theme'] = themeId;
+        saveConfig('os.config.desktop.theme', t.id).then(function() {
+          currentConfig['os.config.desktop.theme'] = t.id;
           render();
           if (window.parent !== window) window.parent.location.reload();
         });
       });
+      grid.appendChild(card);
     });
+    root.appendChild(grid);
 
-    document.getElementById('wm-select').addEventListener('change', function() {
-      var val = this.value;
+    // --- Window Manager ---
+    root.appendChild(sectionTitle('Window Manager'));
+    var wmRow = settingRow('Window Manager', 'How windows are arranged');
+    var wmSelect = document.createElement('select');
+    wmSelect.id = 'wm-select';
+    [['Floating', 'os.wm.floating'], ['Tiling', 'os.wm.tiling']].forEach(function(pair) {
+      var opt = document.createElement('option');
+      opt.textContent = pair[0];
+      opt.value = pair[1];
+      if (activeWM === pair[1]) opt.selected = true;
+      wmSelect.appendChild(opt);
+    });
+    var wmStatus = statusSpan('wm-status');
+    wmSelect.addEventListener('change', function() {
+      var val = wmSelect.value;
       saveConfig('os.config.desktop.wm', val).then(function() {
         currentConfig['os.config.desktop.wm'] = val;
-        flashStatus(document.getElementById('wm-status'));
+        flashStatus(wmStatus);
         if (window.parent !== window) window.parent.location.reload();
       });
     });
+    wmRow.value.appendChild(wmSelect);
+    wmRow.value.appendChild(wmStatus);
+    root.appendChild(wmRow.row);
 
-    // Debounced save for text inputs — fires on paste/type, not just blur.
-    var saveTimers = {};
-    function debouncedSave(id, configKey, statusEl, delay) {
-      var el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('input', function() {
-        var val = el.value;
-        if (saveTimers[id]) clearTimeout(saveTimers[id]);
-        saveTimers[id] = setTimeout(function() {
-          saveConfig(configKey, val).then(function() {
-            currentConfig[configKey] = val;
-            flashStatus(statusEl);
-          });
-        }, delay || 500);
-      });
-    }
+    // --- Desktop ---
+    root.appendChild(sectionTitle('Desktop'));
+    var bgRow = settingRow('Background', 'CSS value (color, gradient, or url())');
+    var bgInput = document.createElement('input');
+    bgInput.type = 'text';
+    bgInput.id = 'bg-input';
+    bgInput.value = background;
+    bgInput.style.minWidth = '240px';
+    var bgStatus = statusSpan('bg-status');
+    bgRow.value.appendChild(bgInput);
+    bgRow.value.appendChild(bgStatus);
+    root.appendChild(bgRow.row);
 
-    debouncedSave('bg-input', 'os.config.desktop.background', document.getElementById('bg-status'));
-    debouncedSave('home-input', 'os.config.shell.home', document.getElementById('home-status'));
+    // --- Shell ---
+    root.appendChild(sectionTitle('Shell'));
+    var homeRow = settingRow('Home directory', 'Default prefix on login');
+    var homeInput = document.createElement('input');
+    homeInput.type = 'text';
+    homeInput.id = 'home-input';
+    homeInput.value = shellHome;
+    var homeStatus = statusSpan('home-status');
+    homeRow.value.appendChild(homeInput);
+    homeRow.value.appendChild(homeStatus);
+    root.appendChild(homeRow.row);
 
-    document.getElementById('headers-select').addEventListener('change', function() {
-      var val = this.value;
+    var headersRow = settingRow('Column headers', 'Show headers in command output tables');
+    var headersSelect = document.createElement('select');
+    headersSelect.id = 'headers-select';
+    [['On', 'on'], ['Off', 'off']].forEach(function(pair) {
+      var opt = document.createElement('option');
+      opt.textContent = pair[0];
+      opt.value = pair[1];
+      if (headers === pair[1]) opt.selected = true;
+      headersSelect.appendChild(opt);
+    });
+    var headersStatus = statusSpan('headers-status');
+    headersSelect.addEventListener('change', function() {
+      var val = headersSelect.value;
       saveConfig('os.config.headers', val).then(function() {
         currentConfig['os.config.headers'] = val;
-        flashStatus(document.getElementById('headers-status'));
+        flashStatus(headersStatus);
       });
     });
+    headersRow.value.appendChild(headersSelect);
+    headersRow.value.appendChild(headersStatus);
+    root.appendChild(headersRow.row);
 
-    // LLM settings.
-    debouncedSave('llm-key-input', 'os.config.llm.api_key', document.getElementById('llm-key-status'));
-    debouncedSave('llm-model-input', 'os.config.llm.model', document.getElementById('llm-model-status'));
-    debouncedSave('llm-tokens-input', 'os.config.llm.max_tokens', document.getElementById('llm-tokens-status'));
+    // --- LLM Agent ---
+    root.appendChild(sectionTitle('LLM Agent'));
+
+    var llmKeyRow = settingRow('API Key', 'Anthropic API key (or set ANTHROPIC_API_KEY env var)');
+    var llmKeyInput = document.createElement('input');
+    llmKeyInput.type = 'password';
+    llmKeyInput.id = 'llm-key-input';
+    llmKeyInput.value = llmKey;
+    llmKeyInput.placeholder = 'sk-ant-...';
+    llmKeyInput.style.minWidth = '240px';
+    var llmKeyStatus = statusSpan('llm-key-status');
+    llmKeyRow.value.appendChild(llmKeyInput);
+    llmKeyRow.value.appendChild(llmKeyStatus);
+    root.appendChild(llmKeyRow.row);
+
+    var llmModelRow = settingRow('Model', 'LLM model identifier');
+    var llmModelInput = document.createElement('input');
+    llmModelInput.type = 'text';
+    llmModelInput.id = 'llm-model-input';
+    llmModelInput.value = llmModel;
+    llmModelInput.style.minWidth = '240px';
+    var llmModelStatus = statusSpan('llm-model-status');
+    llmModelRow.value.appendChild(llmModelInput);
+    llmModelRow.value.appendChild(llmModelStatus);
+    root.appendChild(llmModelRow.row);
+
+    var llmTokensRow = settingRow('Max tokens', 'Maximum response tokens per step');
+    var llmTokensInput = document.createElement('input');
+    llmTokensInput.type = 'text';
+    llmTokensInput.id = 'llm-tokens-input';
+    llmTokensInput.value = llmMaxTokens;
+    llmTokensInput.style.minWidth = '100px';
+    var llmTokensStatus = statusSpan('llm-tokens-status');
+    llmTokensRow.value.appendChild(llmTokensInput);
+    llmTokensRow.value.appendChild(llmTokensStatus);
+    root.appendChild(llmTokensRow.row);
+
+    // --- Keyboard Shortcuts ---
+    root.appendChild(sectionTitle('Keyboard Shortcuts'));
+    var scRow = settingRow('Shortcut Editor', 'View and remap all keyboard shortcuts');
+    var scBtn = el('button', 'settings-btn', 'Open Shortcut Editor');
+    scBtn.addEventListener('click', function() {
+      if (window.openApp) window.openApp('shortcuts');
+    });
+    scRow.value.appendChild(scBtn);
+    root.appendChild(scRow.row);
+
+    // --- Debounced saves for text inputs ---
+    function debouncedSave(input, configKey, status) {
+      input.addEventListener('input', debounce(function() {
+        saveConfig(configKey, input.value).then(function() {
+          currentConfig[configKey] = input.value;
+          flashStatus(status);
+        });
+      }, 500));
+    }
+
+    debouncedSave(bgInput,        'os.config.desktop.background', bgStatus);
+    debouncedSave(homeInput,       'os.config.shell.home',         homeStatus);
+    debouncedSave(llmKeyInput,     'os.config.llm.api_key',        llmKeyStatus);
+    debouncedSave(llmModelInput,   'os.config.llm.model',          llmModelStatus);
+    debouncedSave(llmTokensInput,  'os.config.llm.max_tokens',     llmTokensStatus);
   }
 })();
 """

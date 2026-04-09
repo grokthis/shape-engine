@@ -3,12 +3,11 @@ package lang
 import (
 	"testing"
 
-	"github.com/ashbuilds/shape-engine/pkg/engine"
 	"github.com/ashbuilds/shape-engine/pkg/shape"
 )
 
 func benchEval(b *testing.B, code string) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(code)
 	if err != nil {
 		b.Fatal(err)
@@ -132,8 +131,8 @@ while i < 100 {
 // --- Eval: Shape operations ---
 
 func BenchmarkEvalShapeExists(b *testing.B) {
-	eng := engine.New()
-	eng.AddShape(shapeForBench("bench.a"))
+	eng := testEngine()
+	eng.AddShapeUnchecked(shapeForBench("bench.a"))
 	prog, _ := Parse(`let x = exists("bench.a")`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -142,8 +141,8 @@ func BenchmarkEvalShapeExists(b *testing.B) {
 }
 
 func BenchmarkEvalShapeContent(b *testing.B) {
-	eng := engine.New()
-	eng.AddShape(shapeForBenchContent("bench.a", "hello world this is content"))
+	eng := testEngine()
+	eng.AddShapeUnchecked(shapeForBenchContent("bench.a", "hello world this is content"))
 	prog, _ := Parse(`let x = content("bench.a")`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -152,9 +151,9 @@ func BenchmarkEvalShapeContent(b *testing.B) {
 }
 
 func BenchmarkEvalChildren(b *testing.B) {
-	eng := engine.New()
+	eng := testEngine()
 	for i := 0; i < 50; i++ {
-		eng.AddShape(shapeForBench("bench.child." + string(rune('a'+i%26)) + string(rune('0'+i/26))))
+		eng.AddShapeUnchecked(shapeForBench("bench.child." + string(rune('a'+i%26)) + string(rune('0'+i/26))))
 	}
 	prog, _ := Parse(`let x = children("bench.child")`)
 	b.ResetTimer()
@@ -212,7 +211,7 @@ func BenchmarkBootShapes100(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		eng := engine.New()
+		eng := testEngine()
 		for _, p := range progs {
 			Eval(p, eng, "")
 		}

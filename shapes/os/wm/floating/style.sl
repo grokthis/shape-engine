@@ -91,7 +91,8 @@ html, body {
 }
 .win-btn:hover { background: var(--bg-lighter); color: var(--fg); }
 .win-btn.close:hover { background: var(--red); color: var(--bg); }
-.window-content { flex: 1; overflow: hidden; }
+.window-content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.app-root { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .window-content iframe { width: 100%; height: 100%; border: none; }
 /* Resize handles */
 .window .resize-handle {

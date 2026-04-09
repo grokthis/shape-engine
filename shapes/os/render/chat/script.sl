@@ -1,6 +1,7 @@
 shape os.render.chat.script {
   type: script
   layer: 4
+  deps: os.render.chat.body
   """
 (function() {
   var messages = document.getElementById('chat-messages');

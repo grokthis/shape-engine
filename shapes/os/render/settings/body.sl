@@ -1,7 +1,6 @@
 shape os.render.settings.body {
-  type: body
+  type: app
   layer: 4
-  """
-<div id="settings"></div>
-"""
+  deps: os.render.settings.style
+  id: settings-root
 }

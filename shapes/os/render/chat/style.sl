@@ -2,15 +2,11 @@ shape os.render.chat.style {
   type: style
   layer: 4
   """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
+#chat {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg, #1e1e2e);
   color: var(--text, #cdd6f4);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  height: 100vh;
   overflow: hidden;
-}
-#chat {
   display: flex; flex-direction: column; height: 100vh;
 }
 #chat-header {

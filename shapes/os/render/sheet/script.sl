@@ -1,6 +1,7 @@
 shape os.render.sheet.script {
   type: script
   layer: 4
+  deps: os.render.sheet.body
   """
 (function() {
   var root = document.getElementById('sheet');

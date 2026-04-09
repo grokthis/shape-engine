@@ -53,8 +53,10 @@ func main() {
 	}
 	eng.RegisterTransform(testTx)
 
-	// Boot OS from embedded shapes.
+	// Boot OS from embedded shapes (system mode for unrestricted writes).
+	eng.SetActor("system")
 	bootOS(eng)
+	eng.SetActor("") // locked until login
 
 	// Expose API to JavaScript.
 	js.Global().Set("shapeEngine", js.ValueOf(map[string]interface{}{
@@ -131,7 +133,14 @@ func handleRequestJS(this js.Value, args []js.Value) interface{} {
 		return js.ValueOf(fmt.Sprintf(`{"status":500,"contentType":"text/plain","body":"parse error: %s"}`, err))
 	}
 
+	// Page handlers (GET) run as system — they render the OS.
+	// API handlers (POST) run as the logged-in user — engine enforces namespace.
+	prevActor := eng.Actor()
+	if method == "GET" {
+		eng.SetActor("system")
+	}
 	out, err := lang.EvalWithScope(prog, eng, "", scope)
+	eng.SetActor(prevActor)
 	if err != nil {
 		return js.ValueOf(fmt.Sprintf(`{"status":500,"contentType":"text/plain","body":"eval error: %s"}`, err))
 	}

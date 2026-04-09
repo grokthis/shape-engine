@@ -1,6 +1,7 @@
 shape os.render.terminal.script {
   type: script
   layer: 4
+  deps: os.render.terminal.body
   """
 (function() {
   var output = document.getElementById('output');
@@ -135,10 +136,12 @@ shape os.render.terminal.script {
   var termWin = input.closest('.window') || input.closest('#terminal');
   if (termWin) {
     termWin.addEventListener('click', function(e) {
-      // Don't steal focus if clicking another input inside the terminal.
-      if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
-        input.focus();
-      }
+      // Don't steal focus if clicking another input or if the user just finished
+      // selecting text (selection would be cleared by input.focus()).
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      var sel = window.getSelection();
+      if (sel && sel.toString().length > 0) return;
+      input.focus();
     });
   }
 

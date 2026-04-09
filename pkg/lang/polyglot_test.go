@@ -2,8 +2,6 @@ package lang
 
 import (
 	"testing"
-
-	"github.com/ashbuilds/shape-engine/pkg/engine"
 )
 
 // === Correctness ===
@@ -21,7 +19,7 @@ for i in range(1000):
 		t.Fatalf("stmts: %d, want 2", len(prog.Stmts))
 	}
 
-	eng := engine.New()
+	eng := testEngine()
 	result, fused := tryFuseStatic("s", 0, prog.Stmts[1].(*ForStmt))
 	if !fused {
 		t.Fatal("expected fusion")
@@ -63,7 +61,7 @@ for j := 0; j < 1000; j++ {
 	s += j
 }
 `)
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")
@@ -77,7 +75,7 @@ for i in range(1000) {
   set s = s + i
 }
 `)
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")
@@ -90,7 +88,7 @@ s = 0
 for i in range(1000):
     s += i
 `)
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")
@@ -102,7 +100,7 @@ func BenchmarkPolyglot_Ruby(b *testing.B) {
 s = 0
 (0...1000).each { |i| s += i }
 `)
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")

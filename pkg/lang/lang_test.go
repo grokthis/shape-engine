@@ -9,6 +9,13 @@ import (
 	"github.com/ashbuilds/shape-engine/pkg/shape"
 )
 
+// testEngine creates an engine in system mode (unrestricted writes) for testing.
+func testEngine() *engine.Engine {
+	eng := engine.New()
+	eng.SetActor("system")
+	return eng
+}
+
 func TestLexBasic(t *testing.T) {
 	tokens := lex(`shape engine.edit : engine {
   type: func
@@ -222,7 +229,7 @@ func TestParseForStmt(t *testing.T) {
 }
 
 func TestEvalShapeDecl(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`shape test.alpha {
   type: concept
   layer: 2
@@ -258,8 +265,8 @@ func TestEvalShapeDecl(t *testing.T) {
 }
 
 func TestEvalEdit(t *testing.T) {
-	eng := engine.New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "target",
 		Character: shape.Character{
 			Dimensions: map[string]string{"type": "data"},
@@ -287,7 +294,7 @@ func TestEvalEdit(t *testing.T) {
 }
 
 func TestEvalQuery(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	addShape(eng, "engine.edit", "func", 3)
 	addShape(eng, "engine.propagate", "func", 3)
 	addShape(eng, "other.thing", "data", 1)
@@ -304,7 +311,7 @@ func TestEvalQuery(t *testing.T) {
 }
 
 func TestEvalFnTransform(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 
 	src := `
 shape base {
@@ -355,7 +362,7 @@ edit base "world"
 }
 
 func TestEvalAssert(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	addShape(eng, "test.shape", "concept", 1)
 
 	prog, err := Parse(`assert law0 test.shape`)
@@ -373,7 +380,7 @@ func TestEvalAssert(t *testing.T) {
 }
 
 func TestEvalConditionalTransform(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 
 	src := `
 shape source {
@@ -415,7 +422,7 @@ edit source "important update v2"
 }
 
 func TestEvalAbsorb(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 
 	src := `
 shape source {
@@ -457,7 +464,7 @@ edit source "still boring"
 }
 
 func TestProgramDecomposition(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 
 	src := `
 shape test.a {
@@ -542,7 +549,7 @@ func TestLexMathOperators(t *testing.T) {
 }
 
 func TestEvalMultiply(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`let x = 3 * 4`)
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +561,7 @@ func TestEvalMultiply(t *testing.T) {
 }
 
 func TestEvalMathPrecedence(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	// 2 + 3 * 4 should be 14, not 20.
 	prog, err := Parse(`print(2 + 3 * 4)`)
 	if err != nil {
@@ -570,7 +577,7 @@ func TestEvalMathPrecedence(t *testing.T) {
 }
 
 func TestEvalFloatDivision(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(10.0 / 3)`)
 	if err != nil {
 		t.Fatal(err)
@@ -585,7 +592,7 @@ func TestEvalFloatDivision(t *testing.T) {
 }
 
 func TestEvalFloatMultiply(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(3 * 4.5)`)
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +607,7 @@ func TestEvalFloatMultiply(t *testing.T) {
 }
 
 func TestEvalModulo(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(17 % 5)`)
 	if err != nil {
 		t.Fatal(err)
@@ -615,7 +622,7 @@ func TestEvalModulo(t *testing.T) {
 }
 
 func TestEvalSum(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(sum([1, 2, 3]))`)
 	if err != nil {
 		t.Fatal(err)
@@ -630,7 +637,7 @@ func TestEvalSum(t *testing.T) {
 }
 
 func TestEvalAvg(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(avg([2, 4, 6]))`)
 	if err != nil {
 		t.Fatal(err)
@@ -645,7 +652,7 @@ func TestEvalAvg(t *testing.T) {
 }
 
 func TestEvalRound(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(round(3.14159, 2))`)
 	if err != nil {
 		t.Fatal(err)
@@ -660,7 +667,7 @@ func TestEvalRound(t *testing.T) {
 }
 
 func TestEvalFloorCeil(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(floor(3.7))
 print(ceil(3.2))`)
 	if err != nil {
@@ -679,7 +686,7 @@ print(ceil(3.2))`)
 }
 
 func TestEvalPow(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(pow(2, 10))`)
 	if err != nil {
 		t.Fatal(err)
@@ -694,7 +701,7 @@ func TestEvalPow(t *testing.T) {
 }
 
 func TestEvalAbs(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(abs(0 - 5))`)
 	if err != nil {
 		t.Fatal(err)
@@ -709,7 +716,7 @@ func TestEvalAbs(t *testing.T) {
 }
 
 func TestEvalMinMaxNum(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(min_num([5, 2, 8, 1]))
 print(max_num([5, 2, 8, 1]))`)
 	if err != nil {
@@ -729,7 +736,7 @@ print(max_num([5, 2, 8, 1]))`)
 
 // Ensure float contagion: int op float → float.
 func TestEvalFloatContagion(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`let x = 5 + 1.5
 print(x)`)
 	if err != nil {
@@ -763,7 +770,7 @@ func evalPrint(t *testing.T, eng *engine.Engine, code string) string {
 }
 
 func TestChrOrd(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	result := evalPrint(t, eng, `chr(65)`)
 	if result != "A" {
 		t.Errorf("chr(65) = %q, want A", result)
@@ -775,7 +782,7 @@ func TestChrOrd(t *testing.T) {
 }
 
 func TestHexLiterals(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	result := evalPrint(t, eng, `0xFF`)
 	if result != "255" {
 		t.Errorf("0xFF = %q, want 255", result)
@@ -787,7 +794,7 @@ func TestHexLiterals(t *testing.T) {
 }
 
 func TestBytesCreate(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let b = bytes(4)
 print(len(b))
@@ -805,7 +812,7 @@ print(len(b))
 }
 
 func TestBytesReadWrite(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let b = bytes(4)
 let b = byte_set(b, 0, 0x50)
@@ -826,7 +833,7 @@ print(byte_get(b, 1))
 }
 
 func TestBytesConcat(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let a = string_to_bytes("hello")
 let b = string_to_bytes(" world")
@@ -846,7 +853,7 @@ print(bytes_to_string(c))
 }
 
 func TestBytesU32LE(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let b = bytes(4)
 let b = write_u32_le(b, 0, 0x04034b50)
@@ -866,7 +873,7 @@ print(read_u32_le(b, 0))
 }
 
 func TestCRC32(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let b = string_to_bytes("hello")
 print(crc32(b))
@@ -885,7 +892,7 @@ print(crc32(b))
 }
 
 func TestBitwiseOps(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	result := evalPrint(t, eng, `bit_and(0xFF, 0x0F)`)
 	if result != "15" {
 		t.Errorf("bit_and(0xFF, 0x0F) = %q, want 15", result)
@@ -901,7 +908,7 @@ func TestBitwiseOps(t *testing.T) {
 }
 
 func TestBytesSlice(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let b = string_to_bytes("hello world")
 let s = bytes_slice(b, 6, 11)
@@ -920,9 +927,9 @@ print(bytes_to_string(s))
 }
 
 func TestLibBase64RoundTrip(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	// Add the lib.base64 shape.
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID("lib.base64"),
 		Character: shape.Character{
 			Dimensions: map[string]string{"type": "lib"},
@@ -1022,9 +1029,9 @@ print(bytes_to_string(decoded))
 }
 
 func TestLibZipRoundTrip(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	// Add lib.zip shape with minimal zip_create/zip_extract.
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID("lib.zip"),
 		Character: shape.Character{
 			Dimensions: map[string]string{"type": "lib"},
@@ -1152,9 +1159,9 @@ print(at(e0, 1))
 }
 
 func TestUseLoadsShapeFns(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	// Add a library shape with a function definition.
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID("test.lib.math"),
 		Character: shape.Character{
 			Dimensions: map[string]string{"type": "lib"},
@@ -1180,7 +1187,7 @@ print(double(21))
 // --- Map builtins ---
 
 func TestMapLiteral(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = {name: "alice", age: "30"}
 print(map_get(m, "name"))
@@ -1202,7 +1209,7 @@ print(map_get(m, "age"))
 }
 
 func TestMapSetAndKeys(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = map_new()
 let m = map_set(m, "x", 1)
@@ -1237,7 +1244,7 @@ print(at(ks, 1))
 }
 
 func TestMapDelete(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = {a: "1", b: "2", c: "3"}
 let m = map_delete(m, "b")
@@ -1258,7 +1265,7 @@ print(map_has(m, "a"))
 }
 
 func TestMapMerge(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let a = {x: "1"}
 let b = {y: "2", x: "99"}
@@ -1283,7 +1290,7 @@ print(map_get(c, "x"))
 }
 
 func TestMapGetDefault(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = {key: "val"}
 print(map_get(m, "missing", "default_val"))
@@ -1301,7 +1308,7 @@ print(map_get(m, "missing", "default_val"))
 }
 
 func TestMapValues(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = {a: "10", b: "20"}
 let vs = map_values(m)
@@ -1322,7 +1329,7 @@ print(len(vs))
 // --- JSON builtins ---
 
 func TestJSONEncodeDecodeRoundTrip(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let m = {name: "alice", score: 42}
 let j = json_encode(m)
@@ -1346,7 +1353,7 @@ print(map_get(m2, "name"))
 }
 
 func TestJSONEncodeList(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(json_encode([1, 2, 3]))`)
 	if err != nil {
 		t.Fatal(err)
@@ -1361,7 +1368,7 @@ func TestJSONEncodeList(t *testing.T) {
 }
 
 func TestJSONDecodeList(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let lst = json_decode("[10,20,30]")
 print(len(lst))
@@ -1385,7 +1392,7 @@ print(at(lst, 1))
 // --- Time / env / URL builtins ---
 
 func TestTimeNow(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let ts = time_now()
 print(ts > 0)
@@ -1405,7 +1412,7 @@ print(ms > 0)
 }
 
 func TestURLEncoDecode(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let encoded = url_encode("hello world & more")
 let decoded = url_decode(encoded)
@@ -1426,7 +1433,7 @@ print(decoded)
 // --- Crypto builtins ---
 
 func TestSHA256(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`print(sha256("hello"))`)
 	if err != nil {
 		t.Fatal(err)
@@ -1442,7 +1449,7 @@ func TestSHA256(t *testing.T) {
 }
 
 func TestEd25519KeygenSignVerify(t *testing.T) {
-	eng := engine.New()
+	eng := testEngine()
 	prog, err := Parse(`
 let kp = ed25519_keygen()
 let pub = map_get(kp, "public")
@@ -1475,8 +1482,8 @@ print(bad)
 // --- Shape to map ---
 
 func TestShapeToMap(t *testing.T) {
-	eng := engine.New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "test.shape.foo",
 		Character: shape.Character{
 			Content:    "the content",
@@ -1516,7 +1523,7 @@ print(map_get(em, "layer"))
 // --- helpers ---
 
 func addShape(eng *engine.Engine, id, typ string, layer int) {
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID(id),
 		Character: shape.Character{
 			Dimensions: map[string]string{"type": typ},

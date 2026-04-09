@@ -2,16 +2,12 @@ shape os.render.editor.style {
   type: style
   layer: 4
   """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: var(--bg);
-  color: var(--fg);
+#editor {
   font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
   font-size: 13px;
-  height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
   overflow: hidden;
-}
-#editor {
   display: flex;
   flex-direction: column;
   height: 100%;

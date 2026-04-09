@@ -1,6 +1,7 @@
 shape os.render.browser.script {
   type: script
   layer: 4
+  deps: os.render.browser.body
   """
 (function() {
   var tree = document.getElementById('browser-tree');

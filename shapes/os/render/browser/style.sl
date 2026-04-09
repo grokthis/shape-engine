@@ -2,15 +2,11 @@ shape os.render.browser.style {
   type: style
   layer: 4
   """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body {
-  height: 100%;
-  background: var(--bg, #1a1b26);
-  color: var(--fg, #a9b1d6);
+#browser {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
-}
-#browser {
+  color: var(--fg, #a9b1d6);
+  background: var(--bg, #1a1b26);
   display: flex;
   flex-direction: column;
   height: 100%;

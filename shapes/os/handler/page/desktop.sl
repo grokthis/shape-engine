@@ -22,6 +22,9 @@ if wm_ref == "" {
 }
 let wm_css = render(wm_ref + ".style")
 let wm_js = render(wm_ref + ".script")
+let engine_client_js = render("os.render.engine.client")
+let engine_renderer_js = render("os.render.engine.renderer")
+let engine_shortcuts_js = render("os.render.engine.shortcuts")
 
 let active_ws = "1"
 if exists("os.session.desktop.workspace") {
@@ -122,21 +125,14 @@ for ws_name in ["1", "2", "3"] {
         if render_name == "" {
           set render_name = app_name
         }
-        // Render app content structurally from its render shapes.
-        let app_style = render("os.render." + render_name + ".style")
-        let app_body = render("os.render." + render_name + ".body")
-        let app_script = render("os.render." + render_name + ".script")
-        print("<div class=\"window-content\">")
-        if app_style != "" {
-          print("<style>" + app_style + "</style>")
+        // Emit shape ID. Client renders structurally via renderShapeToDOM.
+        // Pass doc_id for document windows so the editor knows which shape to persist to.
+        let doc_id = dim(dep_id, "doc_id")
+        let data_doc = ""
+        if doc_id != "" {
+          set data_doc = " data-doc=\"" + doc_id + "\""
         }
-        if app_body != "" {
-          print(app_body)
-        }
-        if app_script != "" {
-          print("<script>" + app_script + "</script>")
-        }
-        print("</div>")
+        print("<div class=\"window-content\" data-shape=\"os.render." + render_name + "\"" + data_doc + "></div>")
 
         print("</div>")
       }
@@ -229,9 +225,20 @@ print("</div></div>")
 print("</div></div></div>")
 
 print("<script>")
+if engine_client_js != "" {
+  print(engine_client_js)
+}
+if engine_renderer_js != "" {
+  print(engine_renderer_js)
+}
+if engine_shortcuts_js != "" {
+  print(engine_shortcuts_js)
+}
 if wm_js != "" {
   print(wm_js)
 }
+// Load render shapes from server (native mode), then structurally render all windows.
+print("if (window.shapeEngine) { renderAllShapes(); } else { window.shapeClient.load('os.render').then(renderAllShapes); }")
 print("</script>")
 print("</body>")
 print("</html>")

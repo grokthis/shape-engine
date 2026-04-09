@@ -2,26 +2,25 @@ shape os.render.settings.style {
   type: style
   layer: 4
   """
-body {
-  background: var(--bg);
-  color: var(--fg);
+#settings-root {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
-  padding: 0;
-  margin: 0;
-}
-#settings {
+  background: var(--bg);
+  color: var(--fg);
   max-width: 640px;
   margin: 0 auto;
   padding: 24px 20px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
 }
-h1 {
+.settings-title {
   font-size: 18px;
   font-weight: 600;
   margin-bottom: 20px;
   color: var(--fg);
 }
-h2 {
+.settings-section-title {
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
@@ -30,6 +29,9 @@ h2 {
   margin: 24px 0 12px 0;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+}
+.setting-info {
+  flex: 1;
 }
 .setting-row {
   display: flex;
@@ -98,6 +100,19 @@ select:focus, input[type="text"]:focus {
   cursor: pointer;
 }
 .btn:hover { opacity: 0.9; }
+.settings-btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(128,128,128,0.14);
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: background 0.1s, transform 0.1s;
+}
+.settings-btn:hover { background: rgba(128,128,128,0.22); }
+.settings-btn:active { transform: translateY(1px); }
 .status {
   font-size: 11px;
   color: var(--green);

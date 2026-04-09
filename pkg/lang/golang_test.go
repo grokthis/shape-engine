@@ -2,8 +2,6 @@ package lang
 
 import (
 	"testing"
-
-	"github.com/ashbuilds/shape-engine/pkg/engine"
 )
 
 func TestParseGoLoop(t *testing.T) {
@@ -28,7 +26,7 @@ for i := 0; i < 1000; i++ {
 	}
 
 	// Eval it through the shape engine.
-	eng := engine.New()
+	eng := testEngine()
 	_, err = Eval(prog, eng, "")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +47,7 @@ for i := 0; i < 10; i++ {
 		t.Fatal(err)
 	}
 
-	eng := engine.New()
+	eng := testEngine()
 	_, err = Eval(prog, eng, "")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +67,7 @@ for j := 0; j < 1000; j++ {
 	if err != nil {
 		b.Fatal(err)
 	}
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")
@@ -89,7 +87,7 @@ for j := 0; j < 10; j++ {
 	if err != nil {
 		b.Fatal(err)
 	}
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")
@@ -104,7 +102,7 @@ x := (1 + 2) * 3 - 4 / 2
 	if err != nil {
 		b.Fatal(err)
 	}
-	eng := engine.New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		Eval(prog, eng, "")

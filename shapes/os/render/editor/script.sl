@@ -1,6 +1,7 @@
 shape os.render.editor.script {
   type: script
   layer: 4
+  deps: os.render.editor.body
   """
 (function() {
   var root = document.getElementById('editor');

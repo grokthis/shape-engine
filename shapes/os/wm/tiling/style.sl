@@ -98,7 +98,8 @@ html, body {
 }
 .win-btn:hover { color: var(--fg); }
 .win-btn.close:hover { color: var(--red); }
-.window-content { flex: 1; overflow: hidden; }
+.window-content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.app-root { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .window-content iframe { width: 100%; height: 100%; border: none; }
 #launcher {
   position: fixed;

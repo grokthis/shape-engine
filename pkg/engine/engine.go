@@ -5,11 +5,62 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ashbuilds/shape-engine/pkg/shape"
 	"github.com/ashbuilds/shape-engine/pkg/transform"
 )
+
+// Namespace tiers: owner (user/agent), local (os), global (world).
+// Write isolation: actors can only write to their own namespace prefix.
+
+// namespaceForActor returns the writable namespace prefix for an actor.
+//   - "ash"            → "user.ash."
+//   - "agent:copilot"  → "agent.copilot."
+//   - "" or "system"   → "" (unchecked bootstrap mode)
+func namespaceForActor(actor string) string {
+	if actor == "system" {
+		return "" // unrestricted
+	}
+	if actor == "" {
+		return "\x00" // locked: matches nothing, all writes rejected
+	}
+	if strings.HasPrefix(actor, "agent:") {
+		return "agent." + actor[6:] + "."
+	}
+	// If actor already looks like a namespace (user.X or agent.X), use it directly.
+	if strings.HasPrefix(actor, "user.") || strings.HasPrefix(actor, "agent.") {
+		return actor + "."
+	}
+	return "user." + actor + "."
+}
+
+// ParseNamespace splits a shape ID into (namespace, suffix).
+//   - "os.render.foo"        → ("os", "render.foo")
+//   - "user.ash.render.foo"  → ("user.ash", "render.foo")
+//   - "agent.copilot.draft"  → ("agent.copilot", "draft")
+//   - "world.theme.dark"     → ("world", "theme.dark")
+func ParseNamespace(id shape.ID) (ns, suffix string) {
+	s := string(id)
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return s, ""
+	}
+	kind := s[:dot]
+	rest := s[dot+1:]
+	switch kind {
+	case "user", "agent":
+		// Second segment is the name.
+		dot2 := strings.IndexByte(rest, '.')
+		if dot2 < 0 {
+			return s, ""
+		}
+		return kind + "." + rest[:dot2], rest[dot2+1:]
+	default:
+		return kind, rest
+	}
+}
 
 // Moment is a single entry in the trace log. Every mutation produces a Moment.
 // Moments are append-only and form the complete audit trail.
@@ -54,6 +105,10 @@ type Engine struct {
 	// any prior state can be reconstructed from it.
 	trace []Moment
 
+	// overlayCache maps "actor:requestedID" → resolved ID for overlay lookups.
+	// Invalidated on any mutation to user/agent namespace shapes.
+	overlayCache map[string]shape.ID
+
 	// onMutate is called after every mutation (AddShape, Edit, Block).
 	// The engine is unlocked when this fires. Used for auto-persistence.
 	onMutate func()
@@ -68,14 +123,38 @@ type Engine struct {
 	Debug bool
 }
 
+// ErrNamespace is returned when a write violates namespace isolation.
+type ErrNamespace struct {
+	Actor  string
+	Target shape.ID
+}
+
+func (e *ErrNamespace) Error() string {
+	return fmt.Sprintf("namespace violation: actor %q cannot write to %s", e.Actor, e.Target)
+}
+
+// checkWrite verifies the current actor can write to the target shape ID.
+// Returns nil if allowed, ErrNamespace if not.
+func (e *Engine) checkWrite(target shape.ID) error {
+	prefix := namespaceForActor(e.actor)
+	if prefix == "" {
+		return nil // bootstrap/system mode
+	}
+	if strings.HasPrefix(string(target), prefix) {
+		return nil
+	}
+	return &ErrNamespace{Actor: e.actor, Target: target}
+}
+
 // New creates a new engine with an empty structure.
 func New() *Engine {
 	return &Engine{
-		shapes:     make(map[shape.ID]*shape.Shape),
-		transforms: transform.NewRegistry(),
-		dependents: make(map[shape.ID][]shape.ID),
-		children:   make(map[string]map[string]bool),
-		ext:        make(map[string]interface{}),
+		shapes:       make(map[shape.ID]*shape.Shape),
+		transforms:   transform.NewRegistry(),
+		dependents:   make(map[shape.ID][]shape.ID),
+		children:     make(map[string]map[string]bool),
+		overlayCache: make(map[string]shape.ID),
+		ext:          make(map[string]interface{}),
 	}
 }
 
@@ -164,8 +243,24 @@ func (e *Engine) Actor() string {
 	return e.actor
 }
 
-// AddShape adds a shape to the engine and indexes its dependencies.
-func (e *Engine) AddShape(s *shape.Shape) {
+// AddShape adds a shape to the engine with namespace enforcement.
+// Returns ErrNamespace if the current actor cannot write to this shape's namespace.
+func (e *Engine) AddShape(s *shape.Shape) error {
+	if err := e.checkWrite(s.ID); err != nil {
+		return err
+	}
+	e.addShapeInternal(s)
+	return nil
+}
+
+// AddShapeUnchecked adds a shape without namespace enforcement.
+// Use only for bootstrap loading (before any actor is set).
+func (e *Engine) AddShapeUnchecked(s *shape.Shape) {
+	e.addShapeInternal(s)
+}
+
+// addShapeInternal is the shared implementation for AddShape/AddShapeUnchecked.
+func (e *Engine) addShapeInternal(s *shape.Shape) {
 	e.mu.Lock()
 	e.shapes[s.ID] = s
 
@@ -199,29 +294,212 @@ func (e *Engine) AddShape(s *shape.Shape) {
 		e.children[""][id] = true
 	}
 
+	e.invalidateOverlayCache(s.ID)
 	e.recordMoment("add", s.ID, nil)
 	e.mu.Unlock()
 
 	e.notifyMutate()
 }
 
-// RemoveShape removes a shape from the engine.
-// Does not check for dependents — caller must enforce Law 2.
-func (e *Engine) RemoveShape(id shape.ID) {
+// RemoveShape removes a shape from the engine with namespace enforcement.
+func (e *Engine) RemoveShape(id shape.ID) error {
+	if err := e.checkWrite(id); err != nil {
+		return err
+	}
 	e.mu.Lock()
 	delete(e.shapes, id)
 	delete(e.dependents, id)
+	e.invalidateOverlayCache(id)
 	e.recordMoment("remove", id, nil)
 	e.mu.Unlock()
 	e.notifyMutate()
+	return nil
 }
 
-// GetShape retrieves a shape by ID.
+// GetShape retrieves a shape by ID (direct lookup, no overlay).
 func (e *Engine) GetShape(id shape.ID) (*shape.Shape, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	s, ok := e.shapes[id]
 	return s, ok
+}
+
+// ResolveShape looks up a shape with namespace overlay.
+// For os.* or world.* shapes, checks user override first.
+// Resolution chain: user.<actor>.<suffix> → os.<suffix> → world.<suffix>
+// Returns the shape, the actual resolved ID, and whether it was found.
+func (e *Engine) ResolveShape(id shape.ID) (*shape.Shape, shape.ID, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	actor := e.actor
+	if actor == "" {
+		// No actor: direct lookup only.
+		s, ok := e.shapes[id]
+		return s, id, ok
+	}
+
+	// Check cache.
+	cacheKey := actor + ":" + string(id)
+	if resolved, ok := e.overlayCache[cacheKey]; ok {
+		s, ok := e.shapes[resolved]
+		if ok {
+			return s, resolved, true
+		}
+		// Cache stale, fall through.
+	}
+
+	ns, suffix := ParseNamespace(id)
+	if suffix == "" || (ns != "os" && ns != "world") {
+		// Not an overlayable namespace (already user/agent, or no suffix).
+		s, ok := e.shapes[id]
+		if ok {
+			e.overlayCache[cacheKey] = id
+		}
+		return s, id, ok
+	}
+
+	// Build resolution chain: user override → original.
+	prefix := namespaceForActor(actor)
+	userID := shape.ID(prefix + suffix)
+
+	if s, ok := e.shapes[userID]; ok {
+		e.overlayCache[cacheKey] = userID
+		return s, userID, true
+	}
+
+	// For world.* shapes, also check os.* override.
+	if ns == "world" {
+		osID := shape.ID("os." + suffix)
+		if s, ok := e.shapes[osID]; ok {
+			e.overlayCache[cacheKey] = osID
+			return s, osID, true
+		}
+	}
+
+	// Fall back to original.
+	s, ok := e.shapes[id]
+	if ok {
+		e.overlayCache[cacheKey] = id
+	}
+	return s, id, ok
+}
+
+// invalidateOverlayCache clears overlay cache entries affected by a shape mutation.
+// Called with lock held.
+func (e *Engine) invalidateOverlayCache(id shape.ID) {
+	ns, _ := ParseNamespace(id)
+	if strings.HasPrefix(ns, "user.") || strings.HasPrefix(ns, "agent.") {
+		// User/agent shape changed: clear all cache (could be smarter but safe).
+		clear(e.overlayCache)
+	}
+}
+
+// Promote copies a shape and its dependency tree from one namespace to another.
+// This is the only cross-namespace write operation.
+// targetTier is "local" (os.*) or "global" (world.*).
+func (e *Engine) Promote(sourceID shape.ID, targetTier string) ([]shape.ID, error) {
+	// Determine target prefix.
+	var targetPrefix string
+	switch targetTier {
+	case "local":
+		targetPrefix = "os."
+	case "global":
+		targetPrefix = "world."
+	default:
+		return nil, fmt.Errorf("promote: invalid tier %q (must be local or global)", targetTier)
+	}
+
+	// Check promotion permission.
+	actor := e.Actor()
+	if actor == "" {
+		return nil, fmt.Errorf("promote: no actor set")
+	}
+	permID := shape.ID("os.permissions.promote." + actor)
+	if _, ok := e.GetShape(permID); !ok {
+		return nil, fmt.Errorf("promote: actor %q lacks promotion permission (need %s)", actor, permID)
+	}
+
+	// Collect source shape and its dep tree.
+	sourceNS, sourceSuffix := ParseNamespace(sourceID)
+	if sourceSuffix == "" {
+		return nil, fmt.Errorf("promote: cannot promote root namespace shape %s", sourceID)
+	}
+
+	// DFS to collect all shapes in the dep tree.
+	var toPromote []shape.ID
+	visited := map[shape.ID]bool{}
+	var walk func(id shape.ID)
+	walk = func(id shape.ID) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+		s, ok := e.GetShape(id)
+		if !ok {
+			return
+		}
+		// Only promote shapes in the same source namespace.
+		ns, _ := ParseNamespace(id)
+		if ns == sourceNS {
+			toPromote = append(toPromote, id)
+		}
+		for _, dep := range s.Structure.Transformation.Deps {
+			walk(dep)
+		}
+	}
+	walk(sourceID)
+
+	if len(toPromote) == 0 {
+		return nil, fmt.Errorf("promote: source shape %s not found", sourceID)
+	}
+
+	// Copy each shape with rewritten ID.
+	promoted := make([]shape.ID, 0, len(toPromote))
+	e.mu.Lock()
+	e.tick++
+	for _, srcID := range toPromote {
+		src, ok := e.shapes[srcID]
+		if !ok {
+			continue
+		}
+		_, suffix := ParseNamespace(srcID)
+		newID := shape.ID(targetPrefix + suffix)
+
+		// Deep copy.
+		newShape := &shape.Shape{
+			ID: newID,
+			Character: shape.Character{
+				Content:    src.Character.Content,
+				Dimensions: make(map[string]string, len(src.Character.Dimensions)),
+			},
+			Structure: shape.Structure{
+				Emergence:   src.Structure.Emergence,
+				Permissions: src.Structure.Permissions,
+			},
+			Tick: e.tick,
+		}
+		for k, v := range src.Character.Dimensions {
+			newShape.Character.Dimensions[k] = v
+		}
+		// Rewrite deps that are in the source namespace.
+		for _, dep := range src.Structure.Transformation.Deps {
+			depNS, depSuffix := ParseNamespace(dep)
+			if depNS == sourceNS {
+				newShape.Structure.Transformation.Deps = append(newShape.Structure.Transformation.Deps, shape.ID(targetPrefix+depSuffix))
+			} else {
+				newShape.Structure.Transformation.Deps = append(newShape.Structure.Transformation.Deps, dep)
+			}
+		}
+
+		e.shapes[newID] = newShape
+		promoted = append(promoted, newID)
+	}
+	e.recordMoment("promote", sourceID, nil)
+	e.mu.Unlock()
+	e.notifyMutate()
+
+	return promoted, nil
 }
 
 // PropagationReport is the complete result of an edit: the wave that
@@ -257,6 +535,9 @@ type PropagationReport struct {
 // marks and cascades, NoChange absorbs. The system is always in a known
 // state after Edit returns.
 func (e *Engine) Edit(id shape.ID, newContent string) (*PropagationReport, error) {
+	if err := e.checkWrite(id); err != nil {
+		return nil, err
+	}
 	e.mu.Lock()
 
 	s, ok := e.shapes[id]
@@ -453,6 +734,68 @@ func (e *Engine) propagateBlock(fromID, blockedAuthor shape.ID, report *Propagat
 		// Downstream shapes need to learn that something upstream was withdrawn.
 		e.propagateBlock(depID, blockedAuthor, report, visited)
 	}
+}
+
+// EditDim atomically sets a single dimension on an existing shape.
+// Safe for concurrent use: the entire read-modify-write happens under the lock.
+func (e *Engine) EditDim(id shape.ID, key, value string) error {
+	if err := e.checkWrite(id); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	s, ok := e.shapes[id]
+	if !ok {
+		e.mu.Unlock()
+		return fmt.Errorf("set_dim: shape not found: %s", id)
+	}
+	if s.Character.Dimensions == nil {
+		s.Character.Dimensions = make(map[string]string)
+	}
+	s.Character.Dimensions[key] = value
+	e.tick++
+	s.Tick = e.tick
+	e.recordMoment("edit", id, nil)
+	e.mu.Unlock()
+	e.notifyMutate()
+	return nil
+}
+
+// SetContent atomically sets the content of an existing shape, or creates it.
+// Returns ErrNamespace if the current actor cannot write to this shape's namespace.
+func (e *Engine) SetContent(id shape.ID, content string) error {
+	if err := e.checkWrite(id); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	s, ok := e.shapes[id]
+	if !ok {
+		// Create a minimal shape.
+		s = &shape.Shape{ID: id}
+		e.shapes[id] = s
+		// Index children.
+		sid := string(id)
+		for i := len(sid) - 1; i >= 0; i-- {
+			if sid[i] == '.' {
+				parent := sid[:i]
+				child := sid[i+1:]
+				if dot := indexByte(child, '.'); dot >= 0 {
+					child = child[:dot]
+				}
+				if e.children[parent] == nil {
+					e.children[parent] = make(map[string]bool)
+				}
+				e.children[parent][child] = true
+				break
+			}
+		}
+	}
+	s.Character.Content = content
+	e.tick++
+	s.Tick = e.tick
+	e.recordMoment("edit", id, nil)
+	e.mu.Unlock()
+	e.notifyMutate()
+	return nil
 }
 
 // Status returns the current state of the engine.

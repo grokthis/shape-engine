@@ -10,18 +10,18 @@ import (
 // --- Core operations ---
 
 func BenchmarkAddShape(b *testing.B) {
-	eng := New()
+	eng := testEngine()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s := &shape.Shape{ID: shape.ID("bench." + string(rune('a'+i%26)) + string(rune('0'+i%10)))}
-		eng.AddShape(s)
+		eng.AddShapeUnchecked(s)
 	}
 }
 
 func BenchmarkGetShape(b *testing.B) {
-	eng := New()
+	eng := testEngine()
 	for i := 0; i < 1000; i++ {
-		eng.AddShape(&shape.Shape{ID: shape.ID("bench." + string(rune('a'+i%26)) + string(rune('0'+i/26%10)))})
+		eng.AddShapeUnchecked(&shape.Shape{ID: shape.ID("bench." + string(rune('a'+i%26)) + string(rune('0'+i/26%10)))})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -30,8 +30,8 @@ func BenchmarkGetShape(b *testing.B) {
 }
 
 func BenchmarkEdit(b *testing.B) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "bench.target", Character: shape.Character{Content: "v0"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "bench.target", Character: shape.Character{Content: "v0"}})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		eng.Edit("bench.target", "v1")
@@ -39,11 +39,11 @@ func BenchmarkEdit(b *testing.B) {
 }
 
 func BenchmarkEditWithPropagation(b *testing.B) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{name: "bench.Auto", result: transform.AutoUpdate, content: "updated"})
-	eng.AddShape(&shape.Shape{ID: "base", Character: shape.Character{Content: "v0"}})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base", Character: shape.Character{Content: "v0"}})
 	for i := 0; i < 10; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID("dep." + string(rune('a'+i))),
 			Structure: shape.Structure{Transformation: shape.Transformation{
 				Fn: "bench.Auto", Deps: []shape.ID{"base"},
@@ -57,14 +57,14 @@ func BenchmarkEditWithPropagation(b *testing.B) {
 }
 
 func BenchmarkEditCascade(b *testing.B) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{name: "bench.Auto", result: transform.AutoUpdate, content: "cascaded"})
 	// Chain: a -> b -> c -> d -> e (depth 5)
-	eng.AddShape(&shape.Shape{ID: "chain.a", Character: shape.Character{Content: "v0"}})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "chain.a", Character: shape.Character{Content: "v0"}})
 	for i := 1; i < 5; i++ {
 		prev := shape.ID("chain." + string(rune('a'+i-1)))
 		cur := shape.ID("chain." + string(rune('a'+i)))
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID: cur,
 			Structure: shape.Structure{Transformation: shape.Transformation{
 				Fn: "bench.Auto", Deps: []shape.ID{prev},
@@ -78,9 +78,9 @@ func BenchmarkEditCascade(b *testing.B) {
 }
 
 func BenchmarkValidate(b *testing.B) {
-	eng := New()
+	eng := testEngine()
 	for i := 0; i < 100; i++ {
-		eng.AddShape(&shape.Shape{ID: shape.ID("val." + string(rune('a'+i%26)) + string(rune('0'+i/26)))})
+		eng.AddShapeUnchecked(&shape.Shape{ID: shape.ID("val." + string(rune('a'+i%26)) + string(rune('0'+i/26)))})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -89,8 +89,8 @@ func BenchmarkValidate(b *testing.B) {
 }
 
 func BenchmarkMomentAppend(b *testing.B) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "bench.a", Character: shape.Character{Content: "v0"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "bench.a", Character: shape.Character{Content: "v0"}})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		eng.Edit("bench.a", "v1")
@@ -106,9 +106,9 @@ func BenchmarkAddShape1000(b *testing.B) { benchAddN(b, 1000) }
 func benchAddN(b *testing.B, n int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		eng := New()
+		eng := testEngine()
 		for j := 0; j < n; j++ {
-			eng.AddShape(&shape.Shape{ID: shape.ID("s" + string(rune(j)))})
+			eng.AddShapeUnchecked(&shape.Shape{ID: shape.ID("s" + string(rune(j)))})
 		}
 	}
 }
@@ -117,10 +117,10 @@ func BenchmarkPropagationWidth10(b *testing.B)  { benchPropWidth(b, 10) }
 func BenchmarkPropagationWidth100(b *testing.B) { benchPropWidth(b, 100) }
 
 func benchPropWidth(b *testing.B, width int) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "root", Character: shape.Character{Content: "v0"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "root", Character: shape.Character{Content: "v0"}})
 	for i := 0; i < width; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID:        shape.ID("dep." + string(rune(i))),
 			Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"root"}}},
 		})
@@ -135,10 +135,10 @@ func BenchmarkPropagationDepth5(b *testing.B)  { benchPropDepth(b, 5) }
 func BenchmarkPropagationDepth20(b *testing.B) { benchPropDepth(b, 20) }
 
 func benchPropDepth(b *testing.B, depth int) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "d.0", Character: shape.Character{Content: "v0"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "d.0", Character: shape.Character{Content: "v0"}})
 	for i := 1; i < depth; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID:        shape.ID("d." + string(rune(i))),
 			Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{shape.ID("d." + string(rune(i-1)))}}},
 		})

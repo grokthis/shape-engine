@@ -10,6 +10,13 @@ import (
 	"github.com/ashbuilds/shape-engine/pkg/transform"
 )
 
+// testEngine creates an engine in system mode for testing.
+func testEngine() *Engine {
+	eng := New()
+	eng.SetActor("system")
+	return eng
+}
+
 // --- mockTransform ---
 
 type mockTransform struct {
@@ -30,7 +37,7 @@ func (m *mockTransform) Propagate(change transform.Change, self *shape.Shape) (t
 // --- New ---
 
 func TestNew(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	if eng == nil {
 		t.Fatal("New returned nil")
 	}
@@ -42,14 +49,14 @@ func TestNew(t *testing.T) {
 // --- AddShape / GetShape ---
 
 func TestAddAndGet(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	s := &shape.Shape{
 		ID: "test.a",
 		Character: shape.Character{
 			Content: "hello",
 		},
 	}
-	eng.AddShape(s)
+	eng.AddShapeUnchecked(s)
 
 	got, ok := eng.GetShape("test.a")
 	if !ok {
@@ -61,7 +68,7 @@ func TestAddAndGet(t *testing.T) {
 }
 
 func TestGetMissing(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	_, ok := eng.GetShape("nonexistent")
 	if ok {
 		t.Error("should not find non-existent shape")
@@ -69,9 +76,9 @@ func TestGetMissing(t *testing.T) {
 }
 
 func TestAddOverwrites(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "test.a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{ID: "test.a", Character: shape.Character{Content: "v2"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "test.a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "test.a", Character: shape.Character{Content: "v2"}})
 
 	got, _ := eng.GetShape("test.a")
 	if got.Character.Content != "v2" {
@@ -85,10 +92,10 @@ func TestAddOverwrites(t *testing.T) {
 // --- Shapes ---
 
 func TestShapes(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a"})
-	eng.AddShape(&shape.Shape{ID: "b"})
-	eng.AddShape(&shape.Shape{ID: "c"})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a"})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "b"})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "c"})
 
 	shapes := eng.Shapes()
 	if len(shapes) != 3 {
@@ -99,9 +106,9 @@ func TestShapes(t *testing.T) {
 // --- Dependents index ---
 
 func TestDependentsIndex(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -120,8 +127,8 @@ func TestDependentsIndex(t *testing.T) {
 }
 
 func TestDependentsEmpty(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "lonely"})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "lonely"})
 	deps := eng.Dependents("lonely")
 	if len(deps) != 0 {
 		t.Errorf("lonely shape should have 0 dependents, got %d", len(deps))
@@ -129,13 +136,13 @@ func TestDependentsEmpty(t *testing.T) {
 }
 
 func TestDependentsMultiple(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "d1",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"base"}}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "d2",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"base"}}},
 	})
@@ -149,8 +156,8 @@ func TestDependentsMultiple(t *testing.T) {
 // --- Edit ---
 
 func TestEdit(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "test.a",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{Emergence: shape.Emergence{Layer: 1}},
@@ -180,7 +187,7 @@ func TestEdit(t *testing.T) {
 }
 
 func TestEditNonExistent(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	_, err := eng.Edit("nonexistent", "new content")
 	if err == nil {
 		t.Error("edit of non-existent shape should error")
@@ -188,18 +195,18 @@ func TestEditNonExistent(t *testing.T) {
 }
 
 func TestEditPropagatesAutomatically(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:    "test.Auto",
 		result:  transform.AutoUpdate,
 		content: "auto-updated",
 	})
 
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "base",
 		Character: shape.Character{Content: "v1"},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "derived",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{
@@ -227,22 +234,22 @@ func TestEditPropagatesAutomatically(t *testing.T) {
 }
 
 func TestEditPropagatesCascades(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:    "test.Auto",
 		result:  transform.AutoUpdate,
 		content: "cascaded",
 	})
 
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "b",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{Transformation: shape.Transformation{
 			Fn: "test.Auto", Deps: []shape.ID{"a"},
 		}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "c",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{Transformation: shape.Transformation{
@@ -267,7 +274,7 @@ func TestEditPropagatesCascades(t *testing.T) {
 }
 
 func TestEditNewerAvailableContinuesCascade(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:   "test.Flag",
 		result: transform.FlagForReview,
@@ -278,14 +285,14 @@ func TestEditNewerAvailableContinuesCascade(t *testing.T) {
 		content: "reached-via-cascade",
 	})
 
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "b",
 		Structure: shape.Structure{Transformation: shape.Transformation{
 			Fn: "test.Flag", Deps: []shape.ID{"a"},
 		}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "c",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{Transformation: shape.Transformation{
@@ -313,8 +320,8 @@ func TestEditNewerAvailableContinuesCascade(t *testing.T) {
 }
 
 func TestEditAdvancesTick(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "test.a",
 		Character: shape.Character{Content: "v1"},
 	})
@@ -328,13 +335,13 @@ func TestEditAdvancesTick(t *testing.T) {
 }
 
 func TestEditNewerAvailableWithNoFn(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "base", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "derived",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"base"}}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "transitive",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"derived"}}},
 	})
@@ -355,18 +362,18 @@ func TestEditNewerAvailableWithNoFn(t *testing.T) {
 // --- Propagate ---
 
 func TestPropagateAutoUpdate(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:    "test.Auto",
 		result:  transform.AutoUpdate,
 		content: "auto-updated content",
 	})
 
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "base",
 		Character: shape.Character{Content: "changed"},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "derived",
 		Character: shape.Character{Content: "original"},
 		Structure: shape.Structure{
@@ -395,14 +402,14 @@ func TestPropagateAutoUpdate(t *testing.T) {
 }
 
 func TestPropagateNewerAvailable(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:   "test.Flag",
 		result: transform.FlagForReview,
 	})
 
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -425,14 +432,14 @@ func TestPropagateNewerAvailable(t *testing.T) {
 }
 
 func TestPropagateNoChange(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:   "test.NoOp",
 		result: transform.NoChange,
 	})
 
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -455,7 +462,7 @@ func TestPropagateNoChange(t *testing.T) {
 }
 
 func TestPropagateNonExistent(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	_, err := eng.Propagate("nonexistent")
 	if err == nil {
 		t.Error("propagate on non-existent shape should error")
@@ -463,9 +470,9 @@ func TestPropagateNonExistent(t *testing.T) {
 }
 
 func TestPropagateMissingTransform(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -485,9 +492,9 @@ func TestPropagateMissingTransform(t *testing.T) {
 }
 
 func TestPropagateNoFn(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -506,14 +513,14 @@ func TestPropagateNoFn(t *testing.T) {
 }
 
 func TestPropagateTransformError(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name: "test.Error",
 		err:  fmt.Errorf("transform failed"),
 	})
 
-	eng.AddShape(&shape.Shape{ID: "base"})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "base"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "derived",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{
@@ -535,9 +542,9 @@ func TestPropagateTransformError(t *testing.T) {
 // --- Validate ---
 
 func TestValidateCoherent(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a"})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a"})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "b",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{Deps: []shape.ID{"a"}},
@@ -551,8 +558,8 @@ func TestValidateCoherent(t *testing.T) {
 }
 
 func TestValidateDanglingDep(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "orphan",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{Deps: []shape.ID{"nonexistent"}},
@@ -575,8 +582,8 @@ func TestValidateDanglingDep(t *testing.T) {
 }
 
 func TestValidateDanglingFrom(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "layer3.thing",
 		Structure: shape.Structure{
 			Emergence: shape.Emergence{
@@ -596,8 +603,8 @@ func TestValidateDanglingFrom(t *testing.T) {
 }
 
 func TestValidateMissingTransform(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "test.a",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{Fn: "nonexistent.Transform"},
@@ -614,9 +621,9 @@ func TestValidateMissingTransform(t *testing.T) {
 }
 
 func TestValidateRegisteredTransformIsOK(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{name: "test.Exists"})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "test.a",
 		Structure: shape.Structure{
 			Transformation: shape.Transformation{Fn: "test.Exists"},
@@ -632,7 +639,7 @@ func TestValidateRegisteredTransformIsOK(t *testing.T) {
 // --- Status ---
 
 func TestStatusEmpty(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	status := eng.Status()
 	if status.TotalShapes != 0 {
 		t.Error("empty engine should have 0 shapes")
@@ -643,12 +650,12 @@ func TestStatusEmpty(t *testing.T) {
 }
 
 func TestStatusAfterEdits(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "l1.a",
 		Character: shape.Character{Content: "v1"},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "l2.b",
 		Character: shape.Character{Content: "v1"},
 	})
@@ -668,13 +675,13 @@ func TestStatusAfterEdits(t *testing.T) {
 // --- Cycle handling ---
 
 func TestPropagateCycleHandling(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	// Create a cycle: a -> b -> a (shouldn't infinite loop).
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "a",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"b"}}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "b",
 		Character: shape.Character{Content: "v1"},
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"a"}}},
@@ -695,7 +702,7 @@ func TestPropagateCycleHandling(t *testing.T) {
 // --- RegisterTransform ---
 
 func TestRegisterTransform(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{name: "test.Mock"})
 
 	fn, ok := eng.Registry().Get("test.Mock")
@@ -710,16 +717,16 @@ func TestRegisterTransform(t *testing.T) {
 // --- Tick ---
 
 func TestTickStartsAtZero(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	if eng.Tick() != 0 {
 		t.Errorf("initial tick: %d, want 0", eng.Tick())
 	}
 }
 
 func TestTickIncrementsOnEdit(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{ID: "b", Character: shape.Character{Content: "v1"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "b", Character: shape.Character{Content: "v1"}})
 
 	eng.Edit("a", "v2")
 	if eng.Tick() != 1 {
@@ -733,8 +740,8 @@ func TestTickIncrementsOnEdit(t *testing.T) {
 }
 
 func TestTickStampsEditedShape(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
 
 	if s, _ := eng.GetShape("a"); s.Tick != 0 {
 		t.Error("shape tick should be 0 before edit")
@@ -748,15 +755,15 @@ func TestTickStampsEditedShape(t *testing.T) {
 }
 
 func TestTickStampsAutoUpdated(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.RegisterTransform(&mockTransform{
 		name:    "test.Auto",
 		result:  transform.AutoUpdate,
 		content: "updated",
 	})
 
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "b",
 		Structure: shape.Structure{Transformation: shape.Transformation{
 			Fn: "test.Auto", Deps: []shape.ID{"a"},
@@ -775,9 +782,9 @@ func TestTickStampsAutoUpdated(t *testing.T) {
 }
 
 func TestTickStampsNewerAvailable(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "b",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"a"}}},
 	})
@@ -793,8 +800,8 @@ func TestTickStampsNewerAvailable(t *testing.T) {
 // --- Block / Permissions ---
 
 func TestBlockAddsToPermissions(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "creator.post",
 		Character: shape.Character{Content: "my work"},
 	})
@@ -820,12 +827,12 @@ func TestBlockAddsToPermissions(t *testing.T) {
 }
 
 func TestBlockPropagatesWithdrawal(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "creator.post",
 		Character: shape.Character{Content: "original work"},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "troll.derivative",
 		Character: shape.Character{
 			Content:    "built on creator's work",
@@ -835,7 +842,7 @@ func TestBlockPropagatesWithdrawal(t *testing.T) {
 			Deps: []shape.ID{"creator.post"},
 		}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "innocent.downstream",
 		Character: shape.Character{
 			Content:    "built on troll's work",
@@ -868,7 +875,7 @@ func TestBlockPropagatesWithdrawal(t *testing.T) {
 }
 
 func TestBlockNonExistent(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	_, err := eng.Block("nonexistent", "troll", "")
 	if err == nil {
 		t.Error("block on non-existent shape should error")
@@ -876,8 +883,8 @@ func TestBlockNonExistent(t *testing.T) {
 }
 
 func TestBlockMultiple(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "creator.post",
 		Character: shape.Character{Content: "work"},
 	})
@@ -892,12 +899,12 @@ func TestBlockMultiple(t *testing.T) {
 }
 
 func TestBlockTickStampsWithdrawn(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "creator.post",
 		Character: shape.Character{Content: "work"},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "troll.deriv",
 		Character: shape.Character{
 			Dimensions: map[string]string{"author": "troll"},
@@ -918,9 +925,9 @@ func TestBlockTickStampsWithdrawn(t *testing.T) {
 // --- Trace Moments ---
 
 func TestMomentsRecordedOnAdd(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a"})
-	eng.AddShape(&shape.Shape{ID: "b"})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a"})
+	eng.AddShapeUnchecked(&shape.Shape{ID: "b"})
 
 	if eng.MomentCount() != 2 {
 		t.Errorf("moments: %d, want 2", eng.MomentCount())
@@ -938,8 +945,8 @@ func TestMomentsRecordedOnAdd(t *testing.T) {
 }
 
 func TestMomentsRecordedOnEdit(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
 
 	eng.Edit("a", "v2")
 
@@ -960,8 +967,8 @@ func TestMomentsRecordedOnEdit(t *testing.T) {
 }
 
 func TestMomentsRecordedOnBlock(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "post", Character: shape.Character{Content: "work"}})
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "post", Character: shape.Character{Content: "work"}})
 
 	eng.Block("post", "troll", "bad")
 
@@ -972,9 +979,9 @@ func TestMomentsRecordedOnBlock(t *testing.T) {
 }
 
 func TestMomentsRecordedOnRemove(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a"})
-	eng.RemoveShape("a")
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a"})
+	_ = eng.RemoveShape("a")
 
 	if eng.MomentCount() != 2 {
 		t.Errorf("moments: %d, want 2 (add + remove)", eng.MomentCount())
@@ -986,10 +993,10 @@ func TestMomentsRecordedOnRemove(t *testing.T) {
 }
 
 func TestMomentActorTracking(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	eng.SetActor("user.alice")
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.Edit("a", "v2")
+	eng.AddShapeUnchecked(&shape.Shape{ID: "user.alice.a", Character: shape.Character{Content: "v1"}})
+	eng.Edit("user.alice.a", "v2")
 
 	m, _ := eng.MomentAt(1)
 	if m.Actor != "user.alice" {
@@ -998,9 +1005,9 @@ func TestMomentActorTracking(t *testing.T) {
 }
 
 func TestMomentWavePropagation(t *testing.T) {
-	eng := New()
-	eng.AddShape(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
-	eng.AddShape(&shape.Shape{
+	eng := testEngine()
+	eng.AddShapeUnchecked(&shape.Shape{ID: "a", Character: shape.Character{Content: "v1"}})
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: "b",
 		Structure: shape.Structure{Transformation: shape.Transformation{Deps: []shape.ID{"a"}}},
 	})
@@ -1017,7 +1024,7 @@ func TestMomentWavePropagation(t *testing.T) {
 }
 
 func TestMomentAtOutOfBounds(t *testing.T) {
-	eng := New()
+	eng := testEngine()
 	_, ok := eng.MomentAt(-1)
 	if ok {
 		t.Error("negative index should return false")

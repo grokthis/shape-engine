@@ -2,16 +2,12 @@ shape os.render.terminal.style {
   type: style
   layer: 4
   """
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--fg);
+#terminal {
   font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
   font-size: 13px;
   line-height: 1.5;
-}
-#terminal {
+  color: var(--fg);
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   height: 100%;

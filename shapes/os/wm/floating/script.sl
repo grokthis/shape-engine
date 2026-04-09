@@ -241,8 +241,7 @@ shape os.wm.floating.script : os.wm.floating {
     });
   }
 
-  // Add maximize and minimize buttons to existing windows.
-  document.querySelectorAll('.window').forEach(function(win) {
+  function addWindowChrome(win) {
     var controls = win.querySelector('.window-controls');
     if (controls && !controls.querySelector('.minimize')) {
       var minBtn = document.createElement('button');
@@ -258,7 +257,10 @@ shape os.wm.floating.script : os.wm.floating {
       controls.insertBefore(maxBtn, closeBtn);
     }
     bindWindowEvents(win);
-  });
+  }
+
+  // Add maximize and minimize buttons to existing windows.
+  document.querySelectorAll('.window').forEach(addWindowChrome);
 
   // --- Taskbar ---
   // Show icons or names based on launcher config.
@@ -397,61 +399,97 @@ shape os.wm.floating.script : os.wm.floating {
     else closeLauncher();
   });
 
-  function launchApp(name) {
-    var ws = currentWs;
+  // Re-initialize WM state after workspace DOM replacement.
+  // Called after fetch('/desktop/workspace') replaces #workspace.
+  function wmReinit() {
+    currentWs = document.querySelector('.workspace.active');
+    positionWindows();
+    document.querySelectorAll('.window').forEach(function(win) {
+      if (!win._wmBound) {
+        win._wmBound = true;
+        addWindowChrome(win);
+      }
+    });
+    updateTaskbar();
+  }
+  window._wmReinit = wmReinit;
 
-    // Track recents
-    if (window.shapeEngine) {
-      var recShape = window.shapeEngine.engine.getShape('os.config.launcher.recents');
-      if (recShape) {
-        var recents = recShape.character.content.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s && s !== name; });
+  // Re-render the workspace from the server and reinit.
+  function refreshWorkspace() {
+    return fetch('/desktop/workspace')
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var old = document.getElementById('workspace');
+        if (old) {
+          var tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          var next = tmp.firstElementChild;
+          if (next) old.parentNode.replaceChild(next, old);
+        }
+        wmReinit();
+        // Structurally render all new data-shape containers.
+        if (typeof renderAllShapes === 'function') {
+          if (window.shapeEngine) {
+            renderAllShapes();
+          } else {
+            window.shapeClient.load('os.render').then(renderAllShapes);
+          }
+        }
+      });
+  }
+
+  // launchApp: reuse existing window (app group) or create new one.
+  // forceNew=true always creates a new window (used by "New App" actions).
+  function launchApp(name, forceNew) {
+    // App group: if a window for this app already exists, focus most recent.
+    if (!forceNew) {
+      var existing = document.querySelectorAll('.window[data-app="' + name + '"]');
+      if (existing.length > 0) {
+        var best = existing[0];
+        var bestZ = parseInt(existing[0].style.zIndex) || 0;
+        for (var i = 1; i < existing.length; i++) {
+          var z = parseInt(existing[i].style.zIndex) || 0;
+          if (z > bestZ) { best = existing[i]; bestZ = z; }
+        }
+        if (best.classList.contains('minimized')) best.classList.remove('minimized');
+        focusWindow(best);
+        return;
+      }
+    }
+
+    // Track recents via server API.
+    fetch('/api/shape/os.config.launcher.recents')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var cur = (data && data.content) ? data.content : '';
+        var recents = cur.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s && s !== name; });
         recents.unshift(name);
         if (recents.length > 8) recents = recents.slice(0, 8);
-        window.shapeEngine.engine.edit('os.config.launcher.recents', recents.join(','));
-      }
-    }
+        fetch('/api/shape', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({id: 'os.config.launcher.recents', content: recents.join(',')})
+        });
+      });
 
-    // Resolve render prefix from app shape.
-    var renderName = name;
-    if (window.shapeEngine) {
-      var appShape = window.shapeEngine.engine.getShape('os.app.' + name);
-      if (appShape && appShape.character.dimensions.render) {
-        renderName = appShape.character.dimensions.render;
-      }
-    }
-
-    // Render app content structurally from shapes.
-    var appStyle = '', appBody = '', appScript = '';
-    if (window.shapeEngine) {
-      appStyle = window.shapeEngine.renderShape('os.render.' + renderName + '.style') || '';
-      appBody = window.shapeEngine.renderShape('os.render.' + renderName + '.body') || '';
-      appScript = window.shapeEngine.renderShape('os.render.' + renderName + '.script') || '';
-    }
-
-    var win = document.createElement('div');
-    win.className = 'window focused';
-    win.dataset.app = name;
-    var offset = 30 + ws.querySelectorAll('.window').length * 30;
-    win.style.cssText = 'left:' + offset + 'px;top:' + offset + 'px;width:800px;height:600px;z-index:' + (++zIndex);
-
-    var content = '';
-    if (appStyle) content += '<style>' + appStyle + '</style>';
-    if (appBody) content += appBody;
-    if (appScript) content += '<script>' + appScript + '<\/script>';
-
-    win.innerHTML = '<div class="window-titlebar"><span class="window-title">' + name +
-      '</span><span class="window-controls">' +
-      '<button class="win-btn minimize" title="minimize">&#8211;</button>' +
-      '<button class="win-btn maximize" title="maximize">&#9633;</button>' +
-      '<button class="win-btn close" title="close">&times;</button>' +
-      '</span></div>' +
-      '<div class="window-content">' + content + '</div>';
-    ws.appendChild(win);
-    addResizeHandles(win);
-    bindWindowEvents(win);
-    document.querySelectorAll('.window').forEach(function(w) { w.classList.remove('focused'); });
-    win.classList.add('focused');
-    updateTaskbar();
+    // Create window shape on server, then re-render workspace.
+    var wsName = currentWs ? (currentWs.dataset.ws || '1') : '1';
+    var newWinId = null;
+    fetch('/desktop/window', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({app: name, workspace: wsName})
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      newWinId = data.id || null;
+      return refreshWorkspace();
+    }).then(function() {
+      // Focus the new window so it sits on top of the stack.
+      var target = newWinId
+        ? document.querySelector('.window[data-id="' + newWinId + '"]')
+        : document.querySelector('.window[data-app="' + name + '"]:last-child');
+      if (target) focusWindow(target);
+    });
   }
 
   // --- Window snapping ---
@@ -566,8 +604,8 @@ shape os.wm.floating.script : os.wm.floating {
     } else if (!win) {
       e.preventDefault();
       showCtx(e.clientX, e.clientY, [
-        {label: 'New Shell', action: function() { launchApp('shell'); }},
-        {label: 'New Browser', action: function() { launchApp('browser'); }},
+        {label: 'New Shell', action: function() { launchApp('shell', true); }},
+        {label: 'New Browser', action: function() { launchApp('browser', true); }},
         '---',
         {label: 'Launcher', action: openLauncher},
         {label: 'Help (F1)', action: function() { showHelp('os.desktop'); }},

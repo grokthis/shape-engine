@@ -253,7 +253,7 @@ type evaluator struct {
 func (ev *evaluator) run(prog *Program) (string, error) {
 	// Decompose the program itself as a shape.
 	if ev.ns != "" {
-		ev.eng.AddShape(&shape.Shape{
+		ev.eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID(ev.ns),
 			Character: shape.Character{
 				Dimensions: map[string]string{"type": "program"},
@@ -651,7 +651,7 @@ func (ev *evaluator) execTopWhile(n *WhileStmt) error {
 // execShapeDecl adds a shape to the engine.
 func (ev *evaluator) execShapeDecl(d *ShapeDecl) error {
 	s := d.ToShape()
-	ev.eng.AddShape(s)
+	ev.eng.AddShapeUnchecked(s)
 	return nil
 }
 
@@ -669,7 +669,7 @@ func (ev *evaluator) execFnDecl(d *FnDecl) error {
 
 	// Decompose: the fn declaration becomes a shape.
 	if ev.ns != "" {
-		ev.eng.AddShape(&shape.Shape{
+		ev.eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID(ev.ns + ".fn." + d.Name),
 			Character: shape.Character{
 				Dimensions: map[string]string{
@@ -700,7 +700,7 @@ func (ev *evaluator) execEdit(e *EditStmt) error {
 
 	// Decompose: the edit statement becomes a shape.
 	if ev.ns != "" {
-		ev.eng.AddShape(&shape.Shape{
+		ev.eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID(fmt.Sprintf("%s.edit.%d", ev.ns, ev.edits)),
 			Character: shape.Character{
 				Dimensions: map[string]string{
@@ -836,7 +836,7 @@ func (ev *evaluator) execBlock(b *BlockStmt) error {
 func (ev *evaluator) execUse(u *UseStmt) error {
 	// Record the dependency as a shape.
 	if ev.ns != "" {
-		ev.eng.AddShape(&shape.Shape{
+		ev.eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID(ev.ns + ".use." + sanitizeID(u.Path)),
 			Character: shape.Character{
 				Dimensions: map[string]string{"type": "use", "path": u.Path},
@@ -1117,7 +1117,7 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			return nilVal(), fmt.Errorf("content: need 1 arg")
 		}
 		id := args[0].String()
-		s, ok := ev.eng.GetShape(shape.ID(id))
+		s, _, ok := ev.eng.ResolveShape(shape.ID(id))
 		if ev.eng.Debug {
 			ev.out.WriteString(fmt.Sprintf("[call] content(%q) -> found=%v\n", id, ok))
 		}
@@ -1131,7 +1131,7 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			return nilVal(), fmt.Errorf("dim: need 2 args (id, key)")
 		}
 		id, key := args[0].String(), args[1].String()
-		s, ok := ev.eng.GetShape(shape.ID(id))
+		s, _, ok := ev.eng.ResolveShape(shape.ID(id))
 		if ev.eng.Debug {
 			val := ""
 			if ok {
@@ -1173,7 +1173,7 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) < 1 {
 			return nilVal(), fmt.Errorf("deps: need 1 arg")
 		}
-		s, ok := ev.eng.GetShape(shape.ID(args[0].String()))
+		s, _, ok := ev.eng.ResolveShape(shape.ID(args[0].String()))
 		if !ok {
 			return listVal(nil), nil
 		}
@@ -1276,11 +1276,22 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			return boolVal(false), nil
 		}
 		id := args[0].String()
-		_, ok := ev.eng.GetShape(shape.ID(id))
+		_, _, ok := ev.eng.ResolveShape(shape.ID(id))
 		if ev.eng.Debug {
 			ev.out.WriteString(fmt.Sprintf("[call] exists(%q) -> %v\n", id, ok))
 		}
 		return boolVal(ok), nil
+
+	case "resolve_id":
+		// resolve_id(id) → returns the actual resolved ID after overlay lookup.
+		if len(args) < 1 {
+			return nilVal(), fmt.Errorf("resolve_id: need 1 arg")
+		}
+		_, resolved, ok := ev.eng.ResolveShape(shape.ID(args[0].String()))
+		if !ok {
+			return strVal(""), nil
+		}
+		return strVal(string(resolved)), nil
 
 	case "children":
 		// children(prefix) → list of next-level segment strings.
@@ -1346,7 +1357,7 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(args) >= 4 {
 			lay = args[3].num
 		}
-		ev.eng.AddShape(&shape.Shape{
+		if err := ev.eng.AddShape(&shape.Shape{
 			ID: shape.ID(id),
 			Character: shape.Character{
 				Dimensions: map[string]string{"type": typ},
@@ -1355,7 +1366,9 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			Structure: shape.Structure{
 				Emergence: shape.Emergence{Layer: lay},
 			},
-		})
+		}); err != nil {
+			return nilVal(), err
+		}
 		return nilVal(), nil
 
 	case "add_dep":
@@ -1376,7 +1389,9 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			}
 		}
 		s.Structure.Transformation.Deps = append(s.Structure.Transformation.Deps, did)
-		ev.eng.AddShape(s)
+		if err := ev.eng.AddShape(s); err != nil {
+			return nilVal(), err
+		}
 		return nilVal(), nil
 
 	case "remove":
@@ -1390,36 +1405,27 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		if len(deps) > 0 {
 			return boolVal(false), fmt.Errorf("remove: %s has %d dependents (Law 2)", id, len(deps))
 		}
-		ev.eng.RemoveShape(id)
+		if err := ev.eng.RemoveShape(id); err != nil {
+			return boolVal(false), err
+		}
 		return boolVal(true), nil
 
 	case "set_content":
 		if len(args) < 2 {
 			return nilVal(), fmt.Errorf("set_content: need 2 args (id, content)")
 		}
-		id := shape.ID(args[0].String())
-		s, ok := ev.eng.GetShape(id)
-		if !ok {
-			return nilVal(), fmt.Errorf("set_content: shape not found: %s", id)
+		if err := ev.eng.SetContent(shape.ID(args[0].String()), args[1].String()); err != nil {
+			return nilVal(), err
 		}
-		s.Character.Content = args[1].String()
-		ev.eng.AddShape(s)
 		return nilVal(), nil
 
 	case "set_dim":
 		if len(args) < 3 {
 			return nilVal(), fmt.Errorf("set_dim: need 3 args (id, key, value)")
 		}
-		id := shape.ID(args[0].String())
-		s, ok := ev.eng.GetShape(id)
-		if !ok {
-			return nilVal(), fmt.Errorf("set_dim: shape not found: %s", id)
+		if err := ev.eng.EditDim(shape.ID(args[0].String()), args[1].String(), args[2].String()); err != nil {
+			return nilVal(), err
 		}
-		if s.Character.Dimensions == nil {
-			s.Character.Dimensions = make(map[string]string)
-		}
-		s.Character.Dimensions[args[1].String()] = args[2].String()
-		ev.eng.AddShape(s)
 		return nilVal(), nil
 
 	// --- String operations ---
@@ -2088,8 +2094,10 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 			}
 		}
 		_, renderErr = renderEv.run(renderProg)
-		if renderErr != nil {
-			return strVal(""), nil
+		if renderErr != nil || renderEv.out.Len() == 0 {
+			// Execution error or no output produced: content is static (HTML/CSS/JS).
+			// Return raw content rather than empty string.
+			return strVal(sh.Character.Content), nil
 		}
 		return strVal(renderEv.out.String()), nil
 
@@ -2215,6 +2223,46 @@ func (ev *evaluator) evalCall(c *CallExpr) (value, error) {
 		}
 		ev.eng.SetActor(args[0].String())
 		return strVal(args[0].String()), nil
+
+	case "promote":
+		// promote(source_id, tier) — promote shape + dep tree to "local" or "global".
+		if len(args) < 2 {
+			return nilVal(), fmt.Errorf("promote: need 2 args (source_id, tier)")
+		}
+		promoted, err := ev.eng.Promote(shape.ID(args[0].String()), args[1].String())
+		if err != nil {
+			return nilVal(), err
+		}
+		vals := make([]value, len(promoted))
+		for i, id := range promoted {
+			vals[i] = strVal(string(id))
+		}
+		return listVal(vals), nil
+
+	case "grant_promote":
+		// grant_promote(actor_name) — create promotion permission shape.
+		if len(args) < 1 {
+			return nilVal(), fmt.Errorf("grant_promote: need 1 arg (actor_name)")
+		}
+		permID := shape.ID("os.permissions.promote." + args[0].String())
+		ev.eng.AddShapeUnchecked(&shape.Shape{
+			ID: permID,
+			Character: shape.Character{
+				Dimensions: map[string]string{"type": "permission", "grant": "promote"},
+			},
+			Structure: shape.Structure{
+				Emergence: shape.Emergence{Layer: 0},
+			},
+		})
+		return strVal(string(permID)), nil
+
+	case "namespace":
+		// namespace(id) → returns (ns, suffix) as a two-element list.
+		if len(args) < 1 {
+			return nilVal(), fmt.Errorf("namespace: need 1 arg")
+		}
+		ns, suffix := engine.ParseNamespace(shape.ID(args[0].String()))
+		return listVal([]value{strVal(ns), strVal(suffix)}), nil
 
 	case "shape_tick":
 		// shape_tick(id) — return the tick when this shape was last modified.
@@ -3304,6 +3352,10 @@ func matchGlob(pattern, s string) bool {
 
 // resolvePath resolves a relative shape path against a base.
 func resolvePath(base, path string) string {
+	// Strip trailing slashes (filesystem-style input like "app/").
+	for len(path) > 1 && path[len(path)-1] == '/' {
+		path = path[:len(path)-1]
+	}
 	if path == "" {
 		return base
 	}
@@ -3423,7 +3475,7 @@ func (ev *evaluator) llmStep(taskID string) (value, error) {
 		}
 	}
 	stepID := fmt.Sprintf("%s.step.%d", taskID, n+1)
-	ev.eng.AddShape(&shape.Shape{
+	ev.eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID(stepID),
 		Character: shape.Character{
 			Dimensions: map[string]string{
@@ -3455,7 +3507,7 @@ func (ev *evaluator) llmStep(taskID string) (value, error) {
 	// Update task step counter.
 	task, _ = ev.eng.GetShape(taskShapeID)
 	task.Character.Dimensions["step"] = fmt.Sprintf("%d", n+1)
-	ev.eng.AddShape(task)
+	ev.eng.AddShapeUnchecked(task)
 
 	return strVal(out), nil
 }

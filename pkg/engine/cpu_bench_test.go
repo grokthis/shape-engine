@@ -11,24 +11,24 @@ import (
 
 // setupCPU creates a fresh engine with registers, memory, and control infrastructure.
 func setupCPU() *Engine {
-	eng := New()
+	eng := testEngine()
 
 	// 16 general-purpose registers + pc + sp + flags
 	for i := 0; i < 16; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID:        shape.ID(fmt.Sprintf("hardware.cpu.reg.r%d", i)),
 			Character: shape.Character{Content: "0", Dimensions: map[string]string{"type": "register"}},
 		})
 	}
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "hardware.cpu.reg.pc",
 		Character: shape.Character{Content: "0", Dimensions: map[string]string{"type": "register"}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "hardware.cpu.reg.sp",
 		Character: shape.Character{Content: "4096", Dimensions: map[string]string{"type": "register"}},
 	})
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID:        "hardware.cpu.reg.flags",
 		Character: shape.Character{Content: "0", Dimensions: map[string]string{"type": "register"}},
 	})
@@ -38,7 +38,7 @@ func setupCPU() *Engine {
 
 // addInstruction adds a single instruction shape to the CPU program.
 func addInstruction(eng *Engine, idx int, op, rd, rs1, rs2 string, imm int) {
-	eng.AddShape(&shape.Shape{
+	eng.AddShapeUnchecked(&shape.Shape{
 		ID: shape.ID(fmt.Sprintf("hardware.cpu.prog.%d", idx)),
 		Character: shape.Character{
 			Dimensions: map[string]string{
@@ -82,7 +82,7 @@ func BenchmarkCPU_MemoryWrite(b *testing.B) {
 		addr := shape.ID(fmt.Sprintf("hardware.cpu.mem.%d", i%1024))
 		s, ok := eng.GetShape(addr)
 		if !ok {
-			eng.AddShape(&shape.Shape{
+			eng.AddShapeUnchecked(&shape.Shape{
 				ID:        addr,
 				Character: shape.Character{Content: fmt.Sprintf("%d", i), Dimensions: map[string]string{"type": "memcell"}},
 			})
@@ -96,7 +96,7 @@ func BenchmarkCPU_MemoryRead(b *testing.B) {
 	eng := setupCPU()
 	// Pre-fill 1024 cells
 	for i := 0; i < 1024; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID:        shape.ID(fmt.Sprintf("hardware.cpu.mem.%d", i)),
 			Character: shape.Character{Content: fmt.Sprintf("%d", i*7), Dimensions: map[string]string{"type": "memcell"}},
 		})
@@ -262,7 +262,7 @@ func BenchmarkCPU_ProgramMemory(b *testing.B) {
 	eng := setupCPU()
 	// Write 64 values to memory, read them back, sum them
 	for i := 0; i < 64; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID:        shape.ID(fmt.Sprintf("hardware.cpu.mem.%d", i)),
 			Character: shape.Character{Content: fmt.Sprintf("%d", i+1), Dimensions: map[string]string{"type": "memcell"}},
 		})
@@ -306,7 +306,7 @@ func BenchmarkCPU_RegisterWithDeps(b *testing.B) {
 	eng := setupCPU()
 	// r0 has 4 dependents (simulating pipeline forwarding)
 	for i := 0; i < 4; i++ {
-		eng.AddShape(&shape.Shape{
+		eng.AddShapeUnchecked(&shape.Shape{
 			ID: shape.ID(fmt.Sprintf("hardware.cpu.fwd.%d", i)),
 			Structure: shape.Structure{
 				Transformation: shape.Transformation{
