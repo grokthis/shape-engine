@@ -131,7 +131,16 @@ shape os.render.terminal.script {
     }
   });
 
-  document.addEventListener('click', function() { input.focus(); });
+  // Focus terminal input only when clicking inside the terminal's own window.
+  var termWin = input.closest('.window') || input.closest('#terminal');
+  if (termWin) {
+    termWin.addEventListener('click', function(e) {
+      // Don't steal focus if clicking another input inside the terminal.
+      if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        input.focus();
+      }
+    });
+  }
 
   fetch('/api/shape/os.session.shell.history')
     .then(function(r) { return r.ok ? r.json() : null; })
