@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shape OS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 24px; }
+#loading h1 { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
+#loading .status { font-size: 14px; color: #888; }
+#loading .bar { width: 200px; height: 2px; background: #222; border-radius: 1px; overflow: hidden; }
+#loading .bar-fill { height: 100%; background: #4af; width: 0%; transition: width 0.3s; }
+#os-root { display: none; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="loading">
+  <h1>SHAPE OS</h1>
+  <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+  <div class="status" id="load-status">loading engine...</div>
+</div>
+<div id="os-root"></div>
+
+<script src="shape-engine.js"></script>
+<script>
+(async function() {
+  const barFill = document.getElementById('bar-fill');
+  const loadStatus = document.getElementById('load-status');
+  const loading = document.getElementById('loading');
+  const osRoot = document.getElementById('os-root');
+
+  let engine;
+
+  barFill.style.width = '30%';
+  loadStatus.textContent = 'loading shapes...';
+
+  try {
+    engine = await bootShapeOS();
+  } catch(e) {
+    loadStatus.textContent = 'error: ' + e.message;
+    console.error(e);
+    return;
+  }
+
+  barFill.style.width = '100%';
+  loadStatus.textContent = engine.shapeCount() + ' shapes loaded';
+
+  // --- Shape execution ---
+
+  function renderShape(shapeId, scope) {
+    const s = engine.getShape(shapeId);
+    if (!s || !s.character.content) return '';
+    try {
+      const prog = parse(s.character.content);
+      const ev = createEvaluator(engine);
+      if (scope) for (const [k, v] of Object.entries(scope)) ev.setScope(k, v);
+      ev.run(prog);
+      return ev.getOutput();
+    } catch(e) {
+      return 'Error in ' + shapeId + ': ' + e.message;
+    }
+  }
+
+  function execShell(line) {
+    line = line.trim();
+    if (!line) return '';
+    if (line.includes(' | ')) {
+      const segments = line.split(' | ');
+      let output = '';
+      for (let seg of segments) { seg = seg.trim(); if (output) seg += ' ' + output; output = execShell(seg); }
+      return output;
+    }
+    const parts = line.split(/\s+/);
+    const cmd = parts[0], argList = parts.slice(1);
+    const prefix = engine.getShape('os.session.shell.prefix')?.character.content || '';
+    const home = engine.getShape('os.config.shell.home')?.character.content || '';
+    const cmdShape = engine.getShape('os.shell.cmd.' + cmd);
+    if (cmdShape && cmdShape.character.dimensions.type === 'exec') {
+      const scope = { args: argList.join(' '), line, cmd, prefix, home };
+      argList.forEach((a, i) => scope['arg' + i] = a);
+      return renderShape('os.shell.cmd.' + cmd, scope);
+    }
+    try {
+      const prog = parse(line);
+      const ev = createEvaluator(engine);
+      ev.run(prog);
+      return ev.getOutput();
+    } catch(e) { return 'error: ' + e.message + '\n'; }
+  }
+
+  // --- Route handling: render pages through shape handlers ---
+
+  function handleRequest(method, path) {
+    let bestRoute = null, bestLen = 0;
+    for (const s of engine.allShapes()) {
+      if (s.character.dimensions.type !== 'route') continue;
+      const rm = s.character.dimensions.method;
+      if (rm && rm.toUpperCase() !== method) continue;
+      const rp = s.character.dimensions.path;
+      if (rp === path) { bestRoute = s; break; }
+      if (matchPath(rp, path) && rp.split('/').length > bestLen) { bestRoute = s; bestLen = rp.split('/').length; }
+    }
+    if (!bestRoute) return '';
+    const handler = engine.getShape(bestRoute.character.dimensions.handler);
+    if (!handler) return '';
+    const pathParts = path.split('/').filter(p => p);
+    const patternParts = (bestRoute.character.dimensions.path || '').split('/').filter(p => p);
+    const scope = { ...bestRoute.character.dimensions, method, path, path_path: '' };
+    for (let i = 0; i < patternParts.length; i++) {
+      if (patternParts[i].startsWith('{') && patternParts[i].endsWith('...}')) {
+        scope.path_path = pathParts.slice(i).join('/');
+        break;
+      }
+      if (patternParts[i].startsWith('{') && patternParts[i].endsWith('}')) {
+        const key = 'path_' + patternParts[i].slice(1, -1);
+        scope[key] = pathParts[i] || '';
+      }
+    }
+    return renderShape(handler.id, scope);
+  }
+
+  function matchPath(pattern, path) {
+    if (!pattern) return false;
+    const pp = pattern.split('/'), tp = path.split('/');
+    for (let i = 0; i < pp.length; i++) {
+      if (pp[i].startsWith('{') && pp[i].endsWith('...}')) return i < tp.length;
+      if (i >= tp.length) return false;
+      if (!pp[i].startsWith('{') && pp[i] !== tp[i]) return false;
+    }
+    return pp.length === tp.length;
+  }
+
+  // --- Structural render: shapes -> DOM ---
+  // No document.write. No innerHTML. No iframes.
+  // The engine renders into #os-root by building DOM nodes
+  // from the shape graph. Each shape type maps to a DOM pattern.
+
+  function renderShapeToDOM(shapeId, parent) {
+    const s = engine.getShape(shapeId);
+    if (!s) return;
+    const type = s.character.dimensions.type;
+    const content = s.character.content;
+
+    // Get ordered children
+    const childIds = [];
+    for (const cs of engine.allShapes()) {
+      if (cs.id.startsWith(shapeId + '.') && cs.id.split('.').length === shapeId.split('.').length + 1) {
+        childIds.push(cs);
+      }
+    }
+    childIds.sort((a, b) => {
+      const oa = parseInt(a.character.dimensions.order || '99');
+      const ob = parseInt(b.character.dimensions.order || '99');
+      return oa - ob;
+    });
+
+    let el;
+    switch (type) {
+      case 'page': {
+        el = document.createElement('div');
+        el.className = 'page';
+        const h1 = document.createElement('h1');
+        h1.textContent = s.character.dimensions.title || '';
+        el.appendChild(h1);
+        if (s.character.dimensions.subtitle) {
+          const sub = document.createElement('div');
+          sub.className = 'subtitle';
+          sub.textContent = s.character.dimensions.subtitle;
+          el.appendChild(sub);
+        }
+        break;
+      }
+      case 'section': {
+        el = document.createElement('section');
+        if (s.character.dimensions.title) {
+          const h2 = document.createElement('h2');
+          h2.textContent = s.character.dimensions.title;
+          el.appendChild(h2);
+        }
+        if (content) {
+          const p = document.createElement('p');
+          p.textContent = content.trim();
+          el.appendChild(p);
+        }
+        break;
+      }
+      case 'table': {
+        el = document.createElement('table');
+        const cols = (s.character.dimensions.columns || '').split(',').map(c => c.trim());
+        const thead = document.createElement('thead');
+        const hr = document.createElement('tr');
+        cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hr.appendChild(th); });
+        thead.appendChild(hr);
+        el.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        (content || '').trim().split('\n').forEach(line => {
+          line = line.trim();
+          if (!line) return;
+          const tr = document.createElement('tr');
+          line.split(',').forEach((cell, i) => {
+            const td = document.createElement('td');
+            td.textContent = cell.trim();
+            if (i > 0) td.className = 'num';
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        el.appendChild(tbody);
+        break;
+      }
+      case 'callout': {
+        el = document.createElement('div');
+        el.className = 'callout';
+        el.textContent = content.trim();
+        break;
+      }
+      case 'formula': {
+        el = document.createElement('div');
+        el.className = 'formula';
+        el.textContent = content.trim();
+        break;
+      }
+      case 'graph': {
+        el = document.createElement('div');
+        el.className = 'graph-container';
+        const canvas = document.createElement('canvas');
+        canvas.id = 'graph-' + shapeId.split('.').pop();
+        canvas.style.width = '100%';
+        canvas.style.height = '400px';
+        el.appendChild(canvas);
+        // Graph rendering deferred to after DOM insertion
+        requestAnimationFrame(() => renderGraph(canvas, s));
+        break;
+      }
+      case 'tree': {
+        el = document.createElement('pre');
+        el.textContent = content.trim();
+        break;
+      }
+      case 'column': {
+        el = document.createElement('div');
+        el.className = 'column';
+        if (s.character.dimensions.title) {
+          const h3 = document.createElement('h3');
+          h3.textContent = s.character.dimensions.title;
+          el.appendChild(h3);
+        }
+        if (content) {
+          const p = document.createElement('p');
+          p.textContent = content.trim();
+          el.appendChild(p);
+        }
+        break;
+      }
+      case 'paragraph': {
+        el = document.createElement('p');
+        el.textContent = content.trim();
+        break;
+      }
+      case 'footer': {
+        el = document.createElement('footer');
+        el.textContent = content.trim();
+        break;
+      }
+      case 'shell': {
+        el = document.createElement('div');
+        el.className = 'shell-embed';
+        const output = document.createElement('div');
+        output.className = 'shell-output';
+        output.id = 'shell-output-' + shapeId.split('.').pop();
+        el.appendChild(output);
+        const inputRow = document.createElement('div');
+        inputRow.className = 'shell-input-row';
+        const prompt = document.createElement('span');
+        prompt.className = 'shell-prompt';
+        prompt.textContent = s.character.dimensions.prompt || 'shape> ';
+        inputRow.appendChild(prompt);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'shell-input';
+        input.value = s.character.dimensions.preload || '';
+        input.autofocus = true;
+        inputRow.appendChild(input);
+        el.appendChild(inputRow);
+        // Wire shell
+        input.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          const line = input.value;
+          input.value = '';
+          const cmdEl = document.createElement('div');
+          cmdEl.className = 'shell-cmd';
+          cmdEl.textContent = (s.character.dimensions.prompt || 'shape> ') + line;
+          output.appendChild(cmdEl);
+          const result = execShell(line);
+          if (result) {
+            const outEl = document.createElement('div');
+            outEl.className = 'shell-result';
+            outEl.textContent = result;
+            output.appendChild(outEl);
+          }
+          output.scrollTop = output.scrollHeight;
+        });
+        break;
+      }
+      default: {
+        el = document.createElement('div');
+        if (content) el.textContent = content.trim();
+        break;
+      }
+    }
+
+    if (el) {
+      parent.appendChild(el);
+      // Render children into this element
+      for (const child of childIds) {
+        renderShapeToDOM(child.id, el);
+      }
+    }
+  }
+
+  function renderGraph(canvas, shape) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
+    const pad = { top: 40, right: 40, bottom: 50, left: 80 };
+    const gW = W - pad.left - pad.right;
+    const gH = H - pad.top - pad.bottom;
+
+    const levels = 11, overhead = 265;
+    const data = [];
+    for (let i = 0; i < levels; i++) data.push({ level: i, edit: 191 * Math.pow(overhead, i), gauss: 10.7 });
+
+    const logMin = 0, logMax = 30;
+    const yPos = ns => { if (ns <= 0) return pad.top + gH; const l = Math.log10(ns); return pad.top + gH - (l - logMin) / (logMax - logMin) * gH; };
+    const xPos = lv => pad.left + (lv / (levels - 1)) * gW;
+
+    ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
+    for (let p = 0; p <= 30; p += 5) { const y = yPos(Math.pow(10, p)); ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke(); }
+
+    ctx.fillStyle = '#666'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+    [[1,'1 ns'],[1e3,'1 us'],[1e6,'1 ms'],[1e9,'1 s'],[3.6e12,'1 hr'],[3.15e16,'1 yr'],[3.15e22,'1M yr'],[4.3e26,'heat death']].forEach(([ns, label]) => {
+      const y = yPos(ns); if (y > pad.top && y < pad.top + gH) ctx.fillText(label, pad.left - 8, y + 4);
+    });
+
+    ctx.textAlign = 'center';
+    for (let i = 0; i < levels; i++) ctx.fillText('L' + i, xPos(i), pad.top + gH + 20);
+
+    // Fill gap
+    ctx.fillStyle = 'rgba(255,136,68,0.05)';
+    ctx.beginPath(); ctx.moveTo(xPos(0), yPos(10.7));
+    data.forEach(d => ctx.lineTo(xPos(d.level), yPos(d.edit)));
+    ctx.lineTo(xPos(levels - 1), yPos(10.7)); ctx.closePath(); ctx.fill();
+
+    // Edit line
+    ctx.strokeStyle = '#f84'; ctx.lineWidth = 2; ctx.beginPath();
+    data.forEach((d, i) => { const x = xPos(d.level), y = yPos(d.edit); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+    ctx.stroke();
+    ctx.fillStyle = '#f84';
+    data.forEach(d => { ctx.beginPath(); ctx.arc(xPos(d.level), yPos(d.edit), 4, 0, Math.PI * 2); ctx.fill(); });
+
+    // Gauss line
+    ctx.strokeStyle = '#4f8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(xPos(0), yPos(10.7)); ctx.lineTo(xPos(levels - 1), yPos(10.7)); ctx.stroke();
+    ctx.fillStyle = '#4f8';
+    data.forEach(d => { ctx.beginPath(); ctx.arc(xPos(d.level), yPos(10.7), 4, 0, Math.PI * 2); ctx.fill(); });
+
+    ctx.font = '12px monospace'; ctx.textAlign = 'left';
+    ctx.fillStyle = '#f84'; ctx.fillText('shape edit (265^n)', xPos(5) + 10, yPos(data[5].edit) - 8);
+    ctx.fillStyle = '#4f8'; ctx.fillText('Gauss sum (constant)', xPos(5) + 10, yPos(10.7) - 8);
+    ctx.fillStyle = '#fff'; ctx.font = '14px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Compute Time Dilation', W / 2, 24);
+  }
+
+  // --- Boot: render the OS structurally ---
+
+  setTimeout(() => {
+    loading.style.display = 'none';
+    osRoot.style.display = 'block';
+
+    // Apply theme
+    const themeRef = engine.getShape('os.config.desktop.theme')?.character.content;
+    if (themeRef) {
+      const themeCss = engine.getShape(themeRef)?.character.content;
+      if (themeCss) {
+        const style = document.createElement('style');
+        style.textContent = themeCss;
+        document.head.appendChild(style);
+      }
+    }
+
+    // Add structural render CSS
+    const renderCss = document.createElement('style');
+    renderCss.textContent = `
+      .page { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+      h1 { font-size: 28px; font-weight: 300; letter-spacing: 3px; margin-bottom: 8px; }
+      h2 { font-size: 18px; margin: 40px 0 12px; color: #4af; border-bottom: 1px solid #222; padding-bottom: 8px; }
+      h3 { font-size: 15px; margin: 24px 0 8px; color: #8cf; }
+      .subtitle { color: #888; font-size: 13px; margin-bottom: 32px; }
+      p { margin: 10px 0; color: #ccc; font-size: 13px; line-height: 1.6; }
+      section { margin: 32px 0; }
+      table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; font-family: 'SF Mono','Fira Code',monospace; }
+      th { text-align: left; padding: 8px 10px; background: #111; color: #4af; border-bottom: 2px solid #333; }
+      td { padding: 6px 10px; border-bottom: 1px solid #1a1a1a; }
+      .num { text-align: right; font-variant-numeric: tabular-nums; }
+      tr:hover { background: #0f0f0f; }
+      .callout { background: #0a1a0a; border-left: 3px solid #4f8; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; font-size: 13px; color: #ccc; }
+      .formula { text-align: center; font-size: 16px; color: #ff0; margin: 20px 0; padding: 14px; background: #111; border-radius: 4px; border: 1px solid #333; font-family: 'SF Mono',monospace; }
+      .graph-container { background: #111; border: 1px solid #222; border-radius: 4px; padding: 16px; margin: 16px 0; }
+      pre { background: #111; border: 1px solid #222; border-radius: 4px; padding: 14px; font-size: 12px; overflow-x: auto; line-height: 1.5; }
+      footer { margin-top: 60px; padding: 20px 0; border-top: 1px solid #222; color: #444; font-size: 11px; text-align: center; }
+      .column { display: inline-block; vertical-align: top; width: 48%; margin-right: 2%; }
+      .shell-embed { background: #0a0a0a; border: 1px solid #333; border-radius: 4px; margin: 16px 0; font-family: 'SF Mono','Fira Code',monospace; font-size: 13px; }
+      .shell-output { padding: 12px; max-height: 400px; overflow-y: auto; }
+      .shell-cmd { color: #888; }
+      .shell-result { color: #ccc; white-space: pre-wrap; }
+      .shell-input-row { display: flex; padding: 8px 12px; border-top: 1px solid #222; }
+      .shell-prompt { color: #4af; margin-right: 8px; }
+      .shell-input { flex: 1; background: none; border: none; color: #e0e0e0; font: inherit; outline: none; }
+    `;
+    document.head.appendChild(renderCss);
+
+    // Render the desktop via the route handler.
+    // The handler at os.handler.page.desktop renders the full
+    // desktop HTML from shapes: statusbar, workspaces, windows, apps.
+    const html = handleRequest('GET', '/desktop');
+
+    if (html) {
+      // Insert the rendered desktop into #os-root
+      osRoot.innerHTML = html;
+
+      // Wire terminal inputs
+      osRoot.querySelectorAll('input[type="text"]').forEach(input => {
+        const output = input.closest('.window, .app, div')?.querySelector('#output, .output, [id$="-output"]')
+          || input.previousElementSibling;
+        if (!output) return;
+        input.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          const line = input.value; input.value = '';
+          const cmdEl = document.createElement('div');
+          cmdEl.textContent = 'shape$ ' + line; cmdEl.style.color = '#888';
+          output.appendChild(cmdEl);
+          const result = execShell(line);
+          if (result) {
+            const el = document.createElement('div');
+            el.style.whiteSpace = 'pre-wrap';
+            el.textContent = result;
+            output.appendChild(el);
+          }
+          output.scrollTop = output.scrollHeight;
+        });
+      });
+
+      // Wire window focus
+      osRoot.querySelectorAll('.window').forEach(win => {
+        win.addEventListener('mousedown', () => {
+          osRoot.querySelectorAll('.window').forEach(w => w.classList.remove('focused'));
+          win.classList.add('focused');
+        });
+      });
+
+      // Focus first terminal input
+      const firstInput = osRoot.querySelector('input[type="text"]');
+      if (firstInput) firstInput.focus();
+    } else {
+      // No desktop route: show bare terminal
+      osRoot.innerHTML = '<div style="padding:24px;font-family:monospace;">'
+        + '<div id="output"></div>'
+        + '<input type="text" style="width:100%;background:#111;border:1px solid #333;color:#e0e0e0;padding:8px;font:14px monospace;outline:none;" placeholder="shape> ">'
+        + '</div>';
+      const input = osRoot.querySelector('input');
+      const output = osRoot.querySelector('#output');
+      input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const line = input.value; input.value = '';
+        const cmdEl = document.createElement('div');
+        cmdEl.textContent = 'shape$ ' + line; cmdEl.style.color = '#888';
+        output.appendChild(cmdEl);
+        const result = execShell(line);
+        if (result) { const el = document.createElement('div'); el.style.whiteSpace = 'pre-wrap'; el.textContent = result; output.appendChild(el); }
+        output.scrollTop = output.scrollHeight;
+      });
+      input.focus();
+    }
+
+    // Override fetch so in-page JS routes through the engine
+    const originalFetch = window.fetch;
+    window.fetch = async function(url, options = {}) {
+      let urlStr = typeof url === 'string' ? url : url.toString();
+      if (urlStr.startsWith('/')) {
+        const method = (options.method || 'GET').toUpperCase();
+        const body = handleRequest(method, urlStr);
+        return new Response(body || '', { status: body ? 200 : 404, headers: { 'Content-Type': 'text/html' } });
+      }
+      return originalFetch.call(window, url, options);
+    };
+
+    window.shapeEngine = { engine, execShell, renderShape, handleRequest };
+  }, 500);
+})();
+</script>
+</body>
+</html>
