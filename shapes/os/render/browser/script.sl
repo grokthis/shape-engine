@@ -10,7 +10,8 @@ shape os.render.browser.script {
   var currentPrefix = '';
 
   function loadTree(prefix) {
-    currentPrefix = prefix || '';
+    // Normalize: strip trailing dots/slashes, convert slashes to dots.
+    currentPrefix = (prefix || '').replace(/\/+/g, '.').replace(/\.+$/, '').replace(/^\.+/, '');
     pathInput.value = 'shape://' + currentPrefix;
     fetch('/api/shapes?prefix=' + encodeURIComponent(currentPrefix))
       .then(function(r) { return r.json(); })
@@ -99,7 +100,7 @@ shape os.render.browser.script {
   }
 
   goBtn.addEventListener('click', function() {
-    var val = pathInput.value.replace(/^shape:\/\//, '');
+    var val = pathInput.value.replace(/^shape:\/\//, '').replace(/\/+$/, '').replace(/\//g, '.');
     loadTree(val);
   });
 
