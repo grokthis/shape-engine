@@ -96,6 +96,11 @@ shape os.render.terminal.script {
         history.push(cmd);
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({type: 'input', data: cmd + '\n'}));
+        } else if (window.execShell) {
+          // No WebSocket (static/file mode): use the JS engine directly
+          var result = window.execShell(cmd);
+          if (result) appendOutput(result);
+          output.scrollTop = output.scrollHeight;
         }
       } else {
         promptEl.textContent = currentPrompt;
@@ -137,7 +142,13 @@ shape os.render.terminal.script {
     })
     .catch(function() {});
 
-  connect();
+  // Only connect WebSocket if there's a server. In static/file mode,
+  // use the JS shape engine directly via window.execShell.
+  if (window.execShell) {
+    statusLeft.textContent = 'local';
+  } else {
+    connect();
+  }
 })();
 """
 }
